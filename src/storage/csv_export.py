@@ -1,22 +1,32 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from src.models import AlertRecord, SetupEvaluation
 
 POLYGON_AGGREGATE_FIELDNAMES = ["t", "o", "h", "l", "c", "v", "vw", "n"]
 
 
-def export_evaluations_to_csv(evaluations: list[SetupEvaluation], path: str | Path) -> None:
-    rows = [evaluation.to_record() for evaluation in evaluations]
+def export_evaluations_to_csv(
+    evaluations: list[SetupEvaluation],
+    path: str | Path,
+    market_timezone: str | None = None,
+) -> None:
+    rows = [_with_market_time_columns(evaluation.to_record(), market_timezone) for evaluation in evaluations]
     _write_rows(rows, path)
 
 
-def export_alerts_to_csv(alerts: list[AlertRecord], path: str | Path) -> None:
+def export_alerts_to_csv(
+    alerts: list[AlertRecord],
+    path: str | Path,
+    market_timezone: str | None = None,
+) -> None:
     rows = []
     for alert in alerts:
-        record = alert.evaluation.to_record()
+        record = _with_market_time_columns(alert.evaluation.to_record(), market_timezone)
         record.update(
             {
                 "alert_title": alert.payload.title,
@@ -31,6 +41,20 @@ def export_alerts_to_csv(alerts: list[AlertRecord], path: str | Path) -> None:
 
 def export_polygon_aggregate_rows(rows: list[dict[str, object]], path: str | Path) -> None:
     _write_rows(rows, path, fieldnames=POLYGON_AGGREGATE_FIELDNAMES)
+
+
+def _with_market_time_columns(row: dict[str, object], market_timezone: str | None) -> dict[str, object]:
+    if not market_timezone or "datetime" not in row or not row["datetime"]:
+        return dict(row)
+
+    market_dt = datetime.fromisoformat(str(row["datetime"])).astimezone(ZoneInfo(market_timezone))
+    enriched: dict[str, object] = {}
+    for key, value in row.items():
+        enriched[key] = value
+        if key == "datetime":
+            enriched["datetime_market"] = market_dt.isoformat()
+            enriched["market_timezone"] = market_timezone
+    return enriched
 
 
 def _write_rows(

@@ -62,14 +62,22 @@ class ReplayEngine:
             self.logger.log_alerts(run_id, alerts)
 
         if export_path:
-            export_evaluations_to_csv(evaluations, export_path)
+            export_evaluations_to_csv(evaluations, export_path, market_timezone=self.config.app.market_timezone)
         elif self.config.replay.export_csv_path:
-            export_evaluations_to_csv(evaluations, self.config.replay.export_csv_path)
+            export_evaluations_to_csv(
+                evaluations,
+                self.config.replay.export_csv_path,
+                market_timezone=self.config.app.market_timezone,
+            )
 
         if self.config.storage.alert_csv_path and alerts:
-            export_alerts_to_csv(alerts, self.config.storage.alert_csv_path)
+            export_alerts_to_csv(alerts, self.config.storage.alert_csv_path, market_timezone=self.config.app.market_timezone)
         if self.config.storage.evaluation_csv_path:
-            export_evaluations_to_csv(evaluations, self.config.storage.evaluation_csv_path)
+            export_evaluations_to_csv(
+                evaluations,
+                self.config.storage.evaluation_csv_path,
+                market_timezone=self.config.app.market_timezone,
+            )
 
         return ReplayResult(run_id=run_id, evaluations=evaluations, alerts=alerts)
 

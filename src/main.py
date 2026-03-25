@@ -98,7 +98,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "export-csv":
-        export_evaluations_to_csv(_read_evaluations_from_db(config.storage.sqlite_path), args.output)
+        export_evaluations_to_csv(
+            _read_evaluations_from_db(config.storage.sqlite_path),
+            args.output,
+            market_timezone=config.app.market_timezone,
+        )
         print(f"Exported evaluations to {args.output}")
         return
 
