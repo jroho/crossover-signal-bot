@@ -86,7 +86,7 @@ signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv 
 Fetch a single day of Polygon aggregate data with a fixed `minute` timespan:
 
 ```bash
-signal-bot --config config.toml fetch-day -date 2026-03-24 -multiplier 5 --symbol QQQ --output logs/QQQ_5minute_2026-03-24.csv
+signal-bot --config config.toml fetch-day -date {yyyy-mm-dd} -multiplier 1 --symbol QQQ --output logs/QQQ_5minute_{yyyy-mm-dd}.csv
 ```
 
 If `--symbol` is omitted, the command uses the first configured symbol.

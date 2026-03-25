@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.models import AlertRecord, SetupEvaluation
 
 POLYGON_AGGREGATE_FIELDNAMES = ["t", "o", "h", "l", "c", "v", "vw", "n"]
+REPLAY_CANDLE_FIELDNAMES = ["timestamp", "open", "high", "low", "close", "volume", "symbol"]
 
 
 def export_evaluations_to_csv(
@@ -43,6 +44,31 @@ def export_polygon_aggregate_rows(rows: list[dict[str, object]], path: str | Pat
     _write_rows(rows, path, fieldnames=POLYGON_AGGREGATE_FIELDNAMES)
 
 
+def export_replay_candle_rows(rows: list[dict[str, object]], path: str | Path) -> None:
+    _write_rows(rows, path, fieldnames=REPLAY_CANDLE_FIELDNAMES)
+
+
+def polygon_aggregate_rows_to_replay_rows(
+    rows: list[dict[str, object]],
+    symbol: str,
+) -> list[dict[str, object]]:
+    replay_rows: list[dict[str, object]] = []
+    normalized_symbol = symbol.upper()
+    for row in rows:
+        replay_rows.append(
+            {
+                "timestamp": _format_polygon_timestamp(row.get("t")),
+                "open": row.get("o"),
+                "high": row.get("h"),
+                "low": row.get("l"),
+                "close": row.get("c"),
+                "volume": row.get("v"),
+                "symbol": normalized_symbol,
+            }
+        )
+    return replay_rows
+
+
 def _with_market_time_columns(row: dict[str, object], market_timezone: str | None) -> dict[str, object]:
     if not market_timezone or "datetime" not in row or not row["datetime"]:
         return dict(row)
@@ -72,3 +98,10 @@ def _write_rows(
         writer.writeheader()
         if rows:
             writer.writerows(rows)
+
+
+def _format_polygon_timestamp(value: object) -> str:
+    if value is None:
+        raise ValueError("Polygon aggregate row is missing the 't' timestamp field.")
+    timestamp = datetime.fromtimestamp(float(value) / 1000, tz=UTC)
+    return timestamp.strftime("%Y-%m-%dT%H:%M:%S.0000000+00:00")

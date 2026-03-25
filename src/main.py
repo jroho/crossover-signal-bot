@@ -4,6 +4,7 @@ import argparse
 import sqlite3
 import time
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.alerts import TelegramAlerter, format_alert
@@ -13,7 +14,12 @@ from src.data import PolygonAdapter
 from src.market_hours import is_within_market_hours, parse_clock_time
 from src.models import AlertRecord, Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
 from src.signals import evaluate_symbol
-from src.storage import SQLiteLogger, export_evaluations_to_csv, export_polygon_aggregate_rows
+from src.storage import (
+    SQLiteLogger,
+    export_evaluations_to_csv,
+    export_replay_candle_rows,
+    polygon_aggregate_rows_to_replay_rows,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict live polling to market hours in the configured market timezone",
     )
 
-    fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of Polygon minute aggregates to CSV")
+    fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of replay-compatible Polygon minute candles to CSV")
     fetch_day.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     fetch_day.add_argument("-date", "--date", dest="day", required=True, help="Trading day in YYYY-MM-DD format")
     fetch_day.add_argument(
@@ -129,10 +135,13 @@ def _run_fetch_day_command(
         raise SystemExit("Polygon API key is required for fetch-day.")
     if multiplier < 1:
         raise SystemExit("Multiplier must be greater than or equal to 1.")
+    if multiplier != 1:
+        raise SystemExit("fetch-day exports replay-compatible candles and currently requires --multiplier 1.")
 
     requested_day = _parse_iso_date(day_text)
     resolved_symbol = _resolve_symbol(config, symbol)
     output_path = output or f"logs/{resolved_symbol}_{multiplier}minute_{requested_day.isoformat()}.csv"
+    fixture_output_path = _build_sample_fixture_output_path(requested_day)
 
     adapter = PolygonAdapter(config)
     rows = adapter.get_single_day_aggregate_rows(
@@ -140,8 +149,15 @@ def _run_fetch_day_command(
         day=requested_day,
         multiplier=multiplier,
     )
-    export_polygon_aggregate_rows(rows, output_path)
-    print(f"Saved {len(rows)} rows to {output_path}")
+    replay_rows = polygon_aggregate_rows_to_replay_rows(rows, resolved_symbol)
+    export_replay_candle_rows(replay_rows, output_path)
+    if Path(output_path).resolve() != fixture_output_path.resolve():
+        export_replay_candle_rows(replay_rows, fixture_output_path)
+    print(f"Saved {len(rows)} rows to {output_path} and {fixture_output_path}")
+
+
+def _build_sample_fixture_output_path(day: date) -> Path:
+    return Path("tests") / "fixtures" / f"sample_intraday_{day.isoformat()}.csv"
 
 
 def _resolve_symbol(config: AppConfig, symbol: str) -> str:

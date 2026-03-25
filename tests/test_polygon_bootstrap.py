@@ -73,7 +73,7 @@ def test_polygon_adapter_fetches_single_day_aggregate_rows(base_config):
     ]
 
 
-def test_fetch_day_command_writes_csv(monkeypatch, tmp_path, capsys):
+def test_fetch_day_command_writes_replay_compatible_csv(monkeypatch, tmp_path, capsys):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
@@ -118,7 +118,7 @@ api_key = "test-key"
         "-date",
         "2026-03-24",
         "-multiplier",
-        "3",
+        "1",
         "--output",
         str(output_path),
     ])
@@ -126,13 +126,42 @@ api_key = "test-key"
     assert captured == {
         "symbol": "SPY",
         "day": date(2026, 3, 24),
-        "multiplier": 3,
+        "multiplier": 1,
     }
     assert output_path.read_text(encoding="utf-8") == (
-        "t,o,h,l,c,v,vw,n\n"
-        "1774362600000,586.1,586.4,585.9,586.24,12500,586.18,812\n"
+        "timestamp,open,high,low,close,volume,symbol\n"
+        "2026-03-24T14:30:00.0000000+00:00,586.1,586.4,585.9,586.24,12500,SPY\n"
     )
     assert capsys.readouterr().out.strip() == f"Saved 1 rows to {output_path}"
+
+
+def test_fetch_day_rejects_non_one_minute_multiplier(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[app]
+symbols = ["SPY"]
+
+[polygon]
+api_key = "test-key"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        main([
+            "--config",
+            str(config_path),
+            "fetch-day",
+            "-date",
+            "2026-03-24",
+            "-multiplier",
+            "5",
+        ])
+    except SystemExit as exc:
+        assert str(exc) == "fetch-day exports replay-compatible candles and currently requires --multiplier 1."
+    else:
+        raise AssertionError("Expected fetch-day to reject non-1 multipliers.")
 
 
 def test_init_db_accepts_config_after_subcommand(tmp_path, capsys):
@@ -154,3 +183,4 @@ sqlite_path = \"{sqlite_path.as_posix()}\"
 
     assert sqlite_path.exists()
     assert capsys.readouterr().out.strip() == f"Initialized SQLite schema at {sqlite_path.as_posix()}"
+
