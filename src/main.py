@@ -53,13 +53,6 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of replay-compatible Polygon minute candles to CSV")
     fetch_day.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     fetch_day.add_argument("-date", "--date", dest="day", required=True, help="Trading day in YYYY-MM-DD format")
-    fetch_day.add_argument(
-        "-multiplier",
-        "--multiplier",
-        type=int,
-        default=1,
-        help="Minute aggregate multiplier",
-    )
     fetch_day.add_argument("--symbol", default="", help="Ticker symbol; defaults to the first configured symbol")
     fetch_day.add_argument("--output", default="", help="Optional CSV output path")
 
@@ -98,7 +91,6 @@ def main(argv: list[str] | None = None) -> None:
             config=config,
             symbol=args.symbol,
             day_text=args.day,
-            multiplier=args.multiplier,
             output=args.output,
         )
         return
@@ -128,36 +120,28 @@ def _run_fetch_day_command(
     config: AppConfig,
     symbol: str,
     day_text: str,
-    multiplier: int,
     output: str,
 ) -> None:
     if not config.polygon.api_key:
         raise SystemExit("Polygon API key is required for fetch-day.")
-    if multiplier < 1:
-        raise SystemExit("Multiplier must be greater than or equal to 1.")
-    if multiplier != 1:
-        raise SystemExit("fetch-day exports replay-compatible candles and currently requires --multiplier 1.")
 
     requested_day = _parse_iso_date(day_text)
     resolved_symbol = _resolve_symbol(config, symbol)
-    output_path = output or f"logs/{resolved_symbol}_{multiplier}minute_{requested_day.isoformat()}.csv"
-    fixture_output_path = _build_sample_fixture_output_path(requested_day)
+    output_path = output or _build_default_fetch_day_output_path(resolved_symbol, requested_day)
 
     adapter = PolygonAdapter(config)
     rows = adapter.get_single_day_aggregate_rows(
         symbol=resolved_symbol,
         day=requested_day,
-        multiplier=multiplier,
+        multiplier=1,
     )
     replay_rows = polygon_aggregate_rows_to_replay_rows(rows, resolved_symbol)
     export_replay_candle_rows(replay_rows, output_path)
-    if Path(output_path).resolve() != fixture_output_path.resolve():
-        export_replay_candle_rows(replay_rows, fixture_output_path)
-    print(f"Saved {len(rows)} rows to {output_path} and {fixture_output_path}")
+    print(f"Saved {len(rows)} rows to {output_path}")
 
 
-def _build_sample_fixture_output_path(day: date) -> Path:
-    return Path("tests") / "fixtures" / f"sample_intraday_{day.isoformat()}.csv"
+def _build_default_fetch_day_output_path(symbol: str, day: date) -> Path:
+    return Path("tests") / "fixtures" / f"{symbol.upper()}_1minute_{day.isoformat()}.csv"
 
 
 def _resolve_symbol(config: AppConfig, symbol: str) -> str:
@@ -264,6 +248,7 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
                 sma15_value=row["sma15_value"],
                 sma30_value=row["sma30_value"],
                 sma_trend_relation=row["sma_trend_relation"],
+                sma_cross_signal=row["sma_cross_signal"] if "sma_cross_signal" in row.keys() else "none",
                 rvgi=row["rvgi"],
                 rvgi_sma=row["rvgi_sma"],
                 rvgi_vs_sma=row["rvgi_vs_sma"],
@@ -292,3 +277,4 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
 
 if __name__ == "__main__":
     main()
+

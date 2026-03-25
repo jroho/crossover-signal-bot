@@ -83,6 +83,7 @@ class SetupEvaluation:
     sma15_value: float | None
     sma30_value: float | None
     sma_trend_relation: str
+    sma_cross_signal: str
     rvgi: float | None
     rvgi_sma: float | None
     rvgi_vs_sma: str
@@ -117,6 +118,7 @@ class SetupEvaluation:
             "sma15_value": self.sma15_value,
             "sma30_value": self.sma30_value,
             "sma_trend_relation": self.sma_trend_relation,
+            "sma_cross_signal": self.sma_cross_signal,
             "rvgi": self.rvgi,
             "rvgi_sma": self.rvgi_sma,
             "rvgi_vs_sma": self.rvgi_vs_sma,

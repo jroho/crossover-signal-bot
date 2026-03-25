@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.alerts import TelegramAlerter, format_alert
@@ -30,7 +31,8 @@ class ReplayEngine:
         export_path: str | None = None,
         market_hours_only: bool = False,
     ) -> ReplayResult:
-        source_path = csv_path or self.config.replay.csv_path
+        configured_source = csv_path or self.config.replay.csv_path
+        source_path = self._resolve_source_path(configured_source)
         candles = self.adapter.load_candles(source_path, self.config.app.symbols)
         if market_hours_only:
             candles = self._filter_market_hours(candles)
@@ -56,7 +58,7 @@ class ReplayEngine:
                 )
 
         self.logger.initialize()
-        run_id = self.logger.create_run(mode="replay", config=self.config, source=source_path)
+        run_id = self.logger.create_run(mode="replay", config=self.config, source=str(source_path))
         self.logger.log_evaluations(run_id, evaluations)
         if alerts:
             self.logger.log_alerts(run_id, alerts)
@@ -90,3 +92,17 @@ class ReplayEngine:
             for candle in candles
             if is_within_market_hours(candle.timestamp, market_timezone, market_open, market_close)
         ]
+
+    @staticmethod
+    def _resolve_source_path(path: str | Path) -> Path:
+        candidate = Path(path)
+        if candidate.exists():
+            return candidate
+
+        alternate_name = candidate.name.replace("_5minute_", "_1minute_", 1)
+        if alternate_name != candidate.name:
+            alternate = candidate.with_name(alternate_name)
+            if alternate.exists():
+                return alternate
+
+        return candidate

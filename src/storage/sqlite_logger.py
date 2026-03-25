@@ -41,6 +41,7 @@ class SQLiteLogger:
                     sma15_value REAL,
                     sma30_value REAL,
                     sma_trend_relation TEXT,
+                    sma_cross_signal TEXT,
                     rvgi REAL,
                     rvgi_sma REAL,
                     rvgi_vs_sma TEXT,
@@ -79,6 +80,7 @@ class SQLiteLogger:
                 );
                 """
             )
+            _ensure_columns(connection, "evaluated_setups", {"sma_cross_signal": "TEXT"})
 
     def create_run(self, *, mode: str, config: AppConfig, source: str) -> str:
         run_id = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S%f")
@@ -107,6 +109,7 @@ class SQLiteLogger:
                     record["sma15_value"],
                     record["sma30_value"],
                     record["sma_trend_relation"],
+                    record["sma_cross_signal"],
                     record["rvgi"],
                     record["rvgi_sma"],
                     record["rvgi_vs_sma"],
@@ -136,12 +139,12 @@ class SQLiteLogger:
                 INSERT INTO evaluated_setups (
                     run_id, symbol, datetime, timeframe, direction, last_price,
                     vwap_relation, ema9_relation, sma15_value, sma30_value, sma_trend_relation,
-                    rvgi, rvgi_sma, rvgi_vs_sma, rvgi_sign, volume, recent_volume_avg,
+                    sma_cross_signal, rvgi, rvgi_sma, rvgi_vs_sma, rvgi_sign, volume, recent_volume_avg,
                     rolling_volume_avg, volume_grade, one_min_agreement, grade, strike_bias,
                     strike_bias_reason, passed_conditions, weak_conditions, failed_conditions,
                     rationale, alert_sent, forward_return_3m, forward_return_5m,
                     forward_return_10m, forward_return_15m
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -183,3 +186,10 @@ def _json_safe(value: object) -> object:
     if isinstance(value, list):
         return [_json_safe(item) for item in value]
     return value
+
+
+def _ensure_columns(connection: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:
+    existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+    for name, column_type in columns.items():
+        if name not in existing:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {column_type}")

@@ -13,12 +13,13 @@ It watches market data, computes indicators, grades setups as A/B/C, and sends a
 Detect bullish and bearish intraday setups using:
 - VWAP
 - EMA 9
-- SMA 15
-- SMA 30
+- 5m SMA 15 / SMA 30 crossover as the primary signal
+- SMA 15 level
+- SMA 30 level
 - RVGI
 - RVGI SMA
 - rolling volume comparison
-- optional 1m and 5m timeframe agreement
+- optional 1m confirmation and timing context
 
 ## Product Intent
 This project is an alerting and signal-evaluation tool.
@@ -148,6 +149,12 @@ Use these defaults unless explicitly overridden by config:
 - EMA length: 9
 - SMA fast: 15
 - SMA slow: 30
+- Primary trigger: 5m SMA 15 / SMA 30 crossover
+- Bullish trigger: SMA 15 crosses above SMA 30 on the 5m chart
+- Bearish trigger: SMA 15 crosses below SMA 30 on the 5m chart
+- This 5m 15 / 30 crossover is the most important indicator in the system
+- If the crossover happens while the active 5m candle is still printing, it still counts as a valid 5m trigger for live awareness
+- 1m candles do not own the crossover logic; they are secondary confirmation only
 - RVGI length: 10
 - RVGI SMA length: 10
 - volume comparison window: prior 5 candles minimum
@@ -156,25 +163,30 @@ Use these defaults unless explicitly overridden by config:
 ## Signal Hierarchy
 Always evaluate in this order:
 1. market structure / bias
-2. trigger / timing
+2. 5m SMA 15 / SMA 30 crossover trigger
 3. momentum confirmation
 4. volume confirmation
 5. higher timeframe agreement
 6. strike bias recommendation
 
 No single oscillator should override poor price structure.
+The 5m SMA 15 / SMA 30 crossover is the primary trigger and the most important indicator in the stack.
 
 ## Bullish Structure Rules
 A bullish setup is structurally valid when most or all are true:
 - 5m close > VWAP
 - 5m close > EMA 9
 - SMA 15 > SMA 30
+- the primary bullish trigger is SMA 15 crossing above SMA 30 on the 5m chart
+- if that crossover appears while the current 5m candle is still printing, it still counts as a 5m bullish trigger
 
 ## Bearish Structure Rules
 A bearish setup is structurally valid when most or all are true:
 - 5m close < VWAP
 - 5m close < EMA 9
 - SMA 15 < SMA 30
+- the primary bearish trigger is SMA 15 crossing below SMA 30 on the 5m chart
+- if that crossover appears while the current 5m candle is still printing, it still counts as a 5m bearish trigger
 
 ## RVGI Interpretation
 Robinhood-style interpretation should be supported conceptually:
@@ -216,6 +228,7 @@ When enabled:
 - for bearish setups, 1m price below VWAP and EMA 9 is supportive
 
 1m agreement adds confidence but does not override weak 5m structure.
+1m is confirmation only and must not replace the 5m SMA 15 / SMA 30 crossover trigger.
 
 ## Nearby Structure Awareness
 Design the grading engine so it can later incorporate nearby resistance/support checks.
@@ -226,8 +239,10 @@ In v1, this may be implemented as optional metadata or placeholder logic if reli
 
 ### Grade A
 Use Grade A when structure, timing, and momentum are all strong.
+A fresh 5m SMA 15 / SMA 30 crossover should carry the most weight in the timing decision.
 
 Bullish A:
+- 5m SMA 15 crosses above SMA 30, or has just crossed on the active 5m candle
 - 5m close > VWAP
 - 5m close > EMA 9
 - SMA 15 > SMA 30
@@ -238,6 +253,7 @@ Bullish A:
 - no obvious structural conflict if structure filter exists
 
 Bearish A:
+- 5m SMA 15 crosses below SMA 30, or has just crossed on the active 5m candle
 - inverse of bullish A
 
 Strike bias for Grade A:
@@ -250,6 +266,7 @@ Use Grade B when the setup is constructive but not fully confirmed.
 
 Examples:
 - price structure is good but RVGI crossover is incomplete
+- the 5m 15 / 30 crossover is present, but other confirmations are only partial
 - both RVGI and RVGI SMA are above 0 and rising, but RVGI is still below RVGI SMA
 - volume is average, not strong
 - 1m confirmation is mixed
@@ -265,6 +282,7 @@ Use Grade C when the setup is weak, late, messy, conflicting, or low quality.
 
 Examples:
 - price chops around VWAP and EMA 9
+- there is no fresh 5m 15 / 30 crossover trigger, or the crossover conflicts with the rest of the setup
 - SMA relationship is weak, flat, or recently unstable
 - RVGI is deteriorating
 - trigger volume is weak
@@ -294,6 +312,7 @@ Example output:
 QQQ 5m BULL ALERT
 Price: 586.24
 Grade: B
+15 / 30 cross: bullish 5m trigger
 VWAP: pass
 EMA 9: pass
 15 > 30: pass
@@ -318,6 +337,7 @@ Minimum fields:
 - sma15_value
 - sma30_value
 - sma_trend_relation
+- sma_cross_signal
 - rvgi
 - rvgi_sma
 - rvgi_vs_sma
@@ -398,3 +418,5 @@ Use fixture-based tests with sample candle data.
 - Avoid hidden heuristics
 - Make every alert explainable
 - Keep v1 practical and easy to debug
+
+

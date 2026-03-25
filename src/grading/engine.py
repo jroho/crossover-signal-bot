@@ -31,6 +31,7 @@ def grade_setup(
         return evaluation
 
     is_bull = evaluation.direction == Direction.BULL
+    trigger_aligned = evaluation.sma_cross_signal == evaluation.direction.value
     close_above_vwap = evaluation.last_price > float(indicator_state.vwap)
     close_above_ema = evaluation.last_price > float(indicator_state.ema9)
     sma_bullish = float(indicator_state.sma15) > float(indicator_state.sma30)
@@ -54,6 +55,7 @@ def grade_setup(
 
     _fill_condition_lists(
         evaluation=evaluation,
+        trigger_aligned=trigger_aligned,
         structure_aligned=structure_aligned,
         close_above_vwap=close_above_vwap,
         close_above_ema=close_above_ema,
@@ -66,7 +68,9 @@ def grade_setup(
         one_min_confirmation=one_min_confirmation,
     )
 
-    if structure_aligned and momentum_aligned and volume_supportive:
+    if not trigger_aligned:
+        evaluation.grade = Grade.C
+    elif structure_aligned and momentum_aligned and volume_supportive:
         if config.confirmation.require_one_min_confirmation and one_min_confirmation.status != "yes":
             evaluation.grade = Grade.B if one_min_confirmation.status == "mixed" else Grade.C
         else:
@@ -94,6 +98,8 @@ def grade_setup(
     evaluation.rationale = _build_rationale(
         grade=evaluation.grade,
         direction=evaluation.direction.value,
+        sma_cross_signal=evaluation.sma_cross_signal,
+        trigger_aligned=trigger_aligned,
         structure_aligned=structure_aligned,
         momentum_aligned=momentum_aligned,
         volume_grade=indicator_state.volume_grade,
@@ -117,6 +123,7 @@ def _constructive_rvgi_slope(
 def _fill_condition_lists(
     *,
     evaluation: SetupEvaluation,
+    trigger_aligned: bool,
     structure_aligned: bool,
     close_above_vwap: bool,
     close_above_ema: bool,
@@ -128,6 +135,15 @@ def _fill_condition_lists(
     volume_grade: VolumeGrade,
     one_min_confirmation: OneMinuteConfirmation,
 ) -> None:
+    if trigger_aligned:
+        evaluation.passed_conditions.append("5m SMA 15/30 cross triggered")
+    elif evaluation.sma_cross_signal == "warmup":
+        evaluation.weak_conditions.append("5m SMA 15/30 trigger is still warming up")
+    elif evaluation.sma_cross_signal == "none":
+        evaluation.weak_conditions.append("5m SMA 15/30 cross has not triggered on this candle")
+    else:
+        evaluation.failed_conditions.append("5m SMA 15/30 cross triggered in the opposite direction")
+
     if close_above_vwap:
         evaluation.passed_conditions.append("price aligned with VWAP")
     else:
@@ -186,24 +202,32 @@ def _build_rationale(
     *,
     grade: Grade,
     direction: str,
+    sma_cross_signal: str,
+    trigger_aligned: bool,
     structure_aligned: bool,
     momentum_aligned: bool,
     volume_grade: VolumeGrade,
     one_min_status: str,
 ) -> str:
+    if not trigger_aligned:
+        if sma_cross_signal == "warmup":
+            return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 trigger is still warming up."
+        if sma_cross_signal in {Direction.BULL.value, Direction.BEAR.value}:
+            return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 cross triggered for the opposite direction."
+        return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 trigger did not fire on this candle."
     if grade == Grade.A:
         return (
-            f"{direction.capitalize()} 5m structure is clean, momentum confirms, volume is {volume_grade.value}, "
+            f"{direction.capitalize()} 5m structure is clean, the 5m 15/30 cross fired, momentum confirms, volume is {volume_grade.value}, "
             f"and 1m confirmation is {one_min_status}."
         )
     if grade == Grade.B:
         return (
-            f"{direction.capitalize()} structure is constructive, but at least one confirmation is incomplete. "
+            f"{direction.capitalize()} structure is constructive after a fresh 5m 15/30 cross, but at least one confirmation is incomplete. "
             f"Momentum aligned={momentum_aligned}, volume={volume_grade.value}, 1m={one_min_status}."
         )
     if not structure_aligned:
         return f"{direction.capitalize()} setup is capped at Grade C because the 5m structure is not fully aligned."
     return (
-        f"{direction.capitalize()} setup is Grade C because confirmation quality is weak: "
+        f"{direction.capitalize()} setup is Grade C because confirmation quality is weak after the 5m trigger: "
         f"momentum aligned={momentum_aligned}, volume={volume_grade.value}, 1m={one_min_status}."
     )

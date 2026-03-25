@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 
 from src.data import PolygonAdapter
 from src.main import main
@@ -73,7 +74,7 @@ def test_polygon_adapter_fetches_single_day_aggregate_rows(base_config):
     ]
 
 
-def test_fetch_day_command_writes_replay_compatible_csv(monkeypatch, tmp_path, capsys):
+def test_fetch_day_command_writes_only_requested_output(monkeypatch, tmp_path, capsys):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
@@ -86,6 +87,9 @@ api_key = "test-key"
         encoding="utf-8",
     )
     output_path = tmp_path / "spy_day.csv"
+    default_path = Path("tests/fixtures/SPY_1minute_2026-03-24.csv")
+    if default_path.exists():
+        default_path.unlink()
     captured: dict[str, object] = {}
 
     class FakeAdapter:
@@ -117,8 +121,8 @@ api_key = "test-key"
         "fetch-day",
         "-date",
         "2026-03-24",
-        "-multiplier",
-        "1",
+        "--symbol",
+        "SPY",
         "--output",
         str(output_path),
     ])
@@ -128,14 +132,16 @@ api_key = "test-key"
         "day": date(2026, 3, 24),
         "multiplier": 1,
     }
-    assert output_path.read_text(encoding="utf-8") == (
+    expected_csv = (
         "timestamp,open,high,low,close,volume,symbol\n"
         "2026-03-24T14:30:00.0000000+00:00,586.1,586.4,585.9,586.24,12500,SPY\n"
     )
+    assert output_path.read_text(encoding="utf-8") == expected_csv
+    assert not default_path.exists()
     assert capsys.readouterr().out.strip() == f"Saved 1 rows to {output_path}"
 
 
-def test_fetch_day_rejects_non_one_minute_multiplier(tmp_path):
+def test_fetch_day_without_output_uses_fixture_default(monkeypatch, tmp_path, capsys):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         """
@@ -147,6 +153,30 @@ api_key = "test-key"
 """.strip(),
         encoding="utf-8",
     )
+    default_path = Path("tests/fixtures/SPY_1minute_2026-03-24.csv")
+    default_path.parent.mkdir(parents=True, exist_ok=True)
+    if default_path.exists():
+        default_path.unlink()
+
+    class FakeAdapter:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def get_single_day_aggregate_rows(self, symbol: str, day: date, multiplier: int) -> list[dict[str, object]]:
+            return [
+                {
+                    "t": 1774362600000,
+                    "o": 586.1,
+                    "h": 586.4,
+                    "l": 585.9,
+                    "c": 586.24,
+                    "v": 12500,
+                    "vw": 586.18,
+                    "n": 812,
+                }
+            ]
+
+    monkeypatch.setattr("src.main.PolygonAdapter", FakeAdapter)
 
     try:
         main([
@@ -155,13 +185,19 @@ api_key = "test-key"
             "fetch-day",
             "-date",
             "2026-03-24",
-            "-multiplier",
-            "5",
+            "--symbol",
+            "SPY",
         ])
-    except SystemExit as exc:
-        assert str(exc) == "fetch-day exports replay-compatible candles and currently requires --multiplier 1."
-    else:
-        raise AssertionError("Expected fetch-day to reject non-1 multipliers.")
+
+        expected_csv = (
+            "timestamp,open,high,low,close,volume,symbol\n"
+            "2026-03-24T14:30:00.0000000+00:00,586.1,586.4,585.9,586.24,12500,SPY\n"
+        )
+        assert default_path.read_text(encoding="utf-8") == expected_csv
+        assert capsys.readouterr().out.strip() == f"Saved 1 rows to {default_path}"
+    finally:
+        if default_path.exists():
+            default_path.unlink()
 
 
 def test_init_db_accepts_config_after_subcommand(tmp_path, capsys):
@@ -183,4 +219,3 @@ sqlite_path = \"{sqlite_path.as_posix()}\"
 
     assert sqlite_path.exists()
     assert capsys.readouterr().out.strip() == f"Initialized SQLite schema at {sqlite_path.as_posix()}"
-

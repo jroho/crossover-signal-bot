@@ -15,6 +15,7 @@ def format_alert(evaluation: SetupEvaluation) -> AlertPayload:
             f"Grade: {evaluation.grade.value}",
             f"VWAP: {evaluation.vwap_relation}",
             f"EMA 9: {evaluation.ema9_relation}",
+            f"15/30 Cross: {evaluation.sma_cross_signal}",
             f"15/30 Trend: {evaluation.sma_trend_relation}",
             f"RVGI Sign: {evaluation.rvgi_sign}",
             f"RVGI vs RVGI SMA: {evaluation.rvgi_vs_sma}",

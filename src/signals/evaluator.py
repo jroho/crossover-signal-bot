@@ -8,7 +8,7 @@ import pandas as pd
 from src.config import AppConfig
 from src.grading import grade_setup
 from src.indicators import IndicatorBundle, build_indicator_bundle
-from src.models import Candle, Direction, Grade, OneMinuteConfirmation, SetupEvaluation, StrikeBias, Timeframe
+from src.models import Candle, Direction, Grade, IndicatorState, OneMinuteConfirmation, SetupEvaluation, StrikeBias, Timeframe
 
 
 def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[SetupEvaluation], IndicatorBundle, IndicatorBundle]:
@@ -25,6 +25,7 @@ def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[Setu
             previous = None
             if index > 0:
                 previous = five_min_bundle.states[(symbol, pd.Timestamp(symbol_candles[index - 1].timestamp))]
+            sma_cross_signal = _sma_cross_signal(state, previous)
 
             for direction in (Direction.BULL, Direction.BEAR):
                 one_min_confirmation = _derive_one_min_confirmation(
@@ -44,6 +45,7 @@ def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[Setu
                     sma15_value=state.sma15,
                     sma30_value=state.sma30,
                     sma_trend_relation=_sma_relation(state.sma15, state.sma30),
+                    sma_cross_signal=sma_cross_signal,
                     rvgi=state.rvgi,
                     rvgi_sma=state.rvgi_sma,
                     rvgi_vs_sma=_rvgi_relation(state.rvgi, state.rvgi_sma),
@@ -62,6 +64,19 @@ def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[Setu
                 evaluations.append(evaluation)
     evaluations.sort(key=lambda item: (item.symbol, item.timestamp, item.direction.value))
     return evaluations, one_min_bundle, five_min_bundle
+
+
+# The 5m 15/30 crossover is the primary trigger; 1m remains confirmation-only.
+def _sma_cross_signal(current: IndicatorState, previous: IndicatorState | None) -> str:
+    if previous is None:
+        return "none"
+    if any(value is None for value in (current.sma15, current.sma30, previous.sma15, previous.sma30)):
+        return "warmup"
+    if float(previous.sma15) <= float(previous.sma30) and float(current.sma15) > float(current.sma30):
+        return Direction.BULL.value
+    if float(previous.sma15) >= float(previous.sma30) and float(current.sma15) < float(current.sma30):
+        return Direction.BEAR.value
+    return "none"
 
 
 def _derive_one_min_confirmation(

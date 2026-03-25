@@ -20,7 +20,7 @@ def _config(require_one_min: bool = False) -> AppConfig:
     )
 
 
-def _evaluation(direction: Direction) -> SetupEvaluation:
+def _evaluation(direction: Direction, sma_cross_signal: str | None = None) -> SetupEvaluation:
     return SetupEvaluation(
         symbol="QQQ",
         timestamp=datetime(2026, 3, 24, 15, 0, tzinfo=UTC),
@@ -32,6 +32,7 @@ def _evaluation(direction: Direction) -> SetupEvaluation:
         sma15_value=504.0,
         sma30_value=502.0,
         sma_trend_relation="bullish",
+        sma_cross_signal=sma_cross_signal or direction.value,
         rvgi=0.4,
         rvgi_sma=0.2,
         rvgi_vs_sma="above",
@@ -82,6 +83,7 @@ def test_grade_a_bullish_setup():
 
     assert graded.grade == Grade.A
     assert graded.strike_bias in {StrikeBias.ATM, StrikeBias.ONE_OTM}
+    assert "5m SMA 15/30 cross triggered" in graded.passed_conditions
     assert "price aligned with VWAP" in graded.passed_conditions
 
 
@@ -131,3 +133,41 @@ def test_grade_c_bearish_when_structure_breaks():
     assert graded.grade == Grade.C
     assert graded.strike_bias == StrikeBias.SKIP
     assert any("5m structure" in item for item in graded.failed_conditions)
+
+
+def test_grade_c_when_five_min_cross_did_not_fire():
+    evaluation = _evaluation(Direction.BULL, sma_cross_signal="none")
+    current = IndicatorState(
+        symbol="QQQ",
+        timeframe=Timeframe.FIVE_MINUTE,
+        timestamp=evaluation.timestamp,
+        vwap=500.0,
+        ema9=501.0,
+        sma15=504.0,
+        sma30=502.0,
+        rvgi=0.4,
+        rvgi_sma=0.2,
+        recent_volume_avg=1800,
+        rolling_volume_avg=1700,
+        volume_grade=VolumeGrade.STRONG,
+    )
+    previous = IndicatorState(
+        symbol="QQQ",
+        timeframe=Timeframe.FIVE_MINUTE,
+        timestamp=evaluation.timestamp,
+        vwap=499.0,
+        ema9=500.5,
+        sma15=503.0,
+        sma30=501.5,
+        rvgi=0.3,
+        rvgi_sma=0.1,
+        recent_volume_avg=1700,
+        rolling_volume_avg=1600,
+        volume_grade=VolumeGrade.ACCEPTABLE,
+    )
+
+    graded = grade_setup(evaluation, current, previous, OneMinuteConfirmation("yes", "supportive"), _config())
+
+    assert graded.grade == Grade.C
+    assert graded.strike_bias == StrikeBias.SKIP
+    assert "5m SMA 15/30 cross has not triggered on this candle" in graded.weak_conditions

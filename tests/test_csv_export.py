@@ -16,6 +16,7 @@ def _build_evaluation() -> SetupEvaluation:
         sma15_value=585.0,
         sma30_value=583.0,
         sma_trend_relation="bullish",
+        sma_cross_signal="bull",
         rvgi=0.22,
         rvgi_sma=0.18,
         rvgi_vs_sma="above",
@@ -43,6 +44,7 @@ def test_export_evaluations_to_csv_adds_market_time_columns(tmp_path):
     contents = output_path.read_text(encoding="utf-8")
     assert "datetime_market" in contents
     assert "market_timezone" in contents
+    assert "sma_cross_signal" in contents
     assert "2026-03-24T11:35:00-04:00" in contents
     assert "America/New_York" in contents
 
@@ -71,5 +73,6 @@ def test_export_alerts_to_csv_adds_market_time_columns(tmp_path):
     contents = output_path.read_text(encoding="utf-8")
     assert "datetime_market" in contents
     assert "market_timezone" in contents
+    assert "sma_cross_signal" in contents
     assert "2026-03-24T11:35:00-04:00" in contents
     assert "America/New_York" in contents

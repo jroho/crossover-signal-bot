@@ -16,6 +16,7 @@ def test_alert_payload_contains_required_sections():
         sma15_value=585.0,
         sma30_value=583.0,
         sma_trend_relation="bullish",
+        sma_cross_signal="bull",
         rvgi=0.22,
         rvgi_sma=0.18,
         rvgi_vs_sma="above",
@@ -39,4 +40,5 @@ def test_alert_payload_contains_required_sections():
     assert payload.title == "QQQ 5m BULL ALERT"
     assert "Strike bias: ATM" in payload.message
     assert "Reason: Bullish structure is intact" in payload.message
+    assert "15/30 Cross: bull" in payload.message
     assert "1m agreement: yes" in payload.message

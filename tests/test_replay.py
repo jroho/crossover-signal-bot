@@ -69,3 +69,23 @@ def test_replay_market_filter_keeps_only_market_window(base_config, tmp_path: Pa
         datetime(2026, 3, 24, 13, 30, tzinfo=UTC),
         datetime(2026, 3, 24, 19, 45, tzinfo=UTC),
     ]
+
+
+def test_replay_resolves_legacy_five_minute_fixture_name(base_config, tmp_path: Path):
+    actual_path = tmp_path / "QQQ_1minute_2026-03-24.csv"
+    requested_path = tmp_path / "QQQ_5minute_2026-03-24.csv"
+    actual_path.write_text(
+        "\n".join(
+            [
+                "timestamp,open,high,low,close,volume,symbol",
+                "2026-03-24T13:30:00+00:00,100,101,99,100.5,1000,QQQ",
+                "2026-03-24T13:31:00+00:00,101,102,100,101.5,1100,QQQ",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = ReplayEngine(base_config)
+    resolved = engine._resolve_source_path(requested_path)
+
+    assert resolved == actual_path
