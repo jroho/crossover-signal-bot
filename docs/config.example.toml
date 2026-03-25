@@ -1,0 +1,53 @@
+[app]
+symbols = ["QQQ", "SPY"]
+market_timezone = "America/New_York"
+
+[indicators]
+ema_length = 9
+sma_fast_length = 15
+sma_slow_length = 30
+rvgi_length = 10
+rvgi_signal_length = 10
+
+[volume]
+prior_window = 5
+use_rolling_average = true
+rolling_window = 10
+strong_ratio = 1.2
+acceptable_ratio = 0.9
+top_n_strong = 2
+
+[confirmation]
+enable_one_min_confirmation = true
+require_one_min_confirmation = false
+
+[grading]
+alert_grades = ["A", "B"]
+allow_grade_c_soft_alerts = false
+allow_grade_b_itm = true
+allow_grade_a_otm = true
+allow_two_otm = false
+
+[storage]
+sqlite_path = "logs/signals.sqlite3"
+evaluation_csv_path = "logs/evaluations.csv"
+alert_csv_path = "logs/alerts.csv"
+
+[replay]
+csv_path = "tests/fixtures/sample_intraday.csv"
+send_telegram = false
+export_csv_path = ""
+
+[telegram]
+enabled = false
+bot_token = ""
+chat_id = ""
+
+[polygon]
+enabled = false
+base_url = "https://api.polygon.io"
+api_key = ""
+
+[live]
+lookback_minutes = 180
+poll_seconds = 60
