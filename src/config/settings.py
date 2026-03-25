@@ -73,6 +73,9 @@ class PolygonConfig:
 class LiveConfig:
     lookback_minutes: int = 180
     poll_seconds: int = 60
+    market_hours_only: bool = False
+    market_open_time: str = "09:30"
+    market_close_time: str = "15:45"
 
 
 @dataclass(frozen=True)

@@ -4,11 +4,13 @@ import argparse
 import sqlite3
 import time
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.alerts import TelegramAlerter, format_alert
 from src.backtest import ReplayEngine
 from src.config import AppConfig, load_config
 from src.data import PolygonAdapter
+from src.market_hours import is_within_market_hours, parse_clock_time
 from src.models import AlertRecord, Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
 from src.signals import evaluate_symbol
 from src.storage import SQLiteLogger, export_evaluations_to_csv, export_polygon_aggregate_rows
@@ -23,10 +25,24 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     replay.add_argument("--csv", default="", help="Replay CSV path")
     replay.add_argument("--export", default="", help="Optional evaluation CSV export path")
+    replay.add_argument(
+        "--market",
+        "--market-hours-only",
+        dest="market_hours_only",
+        action="store_true",
+        help="Restrict replay to market hours in the configured market timezone",
+    )
 
     live = subparsers.add_parser("live", help="Run minimal live polling with Polygon")
     live.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     live.add_argument("--poll-seconds", type=int, default=60, help="Polling interval in seconds")
+    live.add_argument(
+        "--market",
+        "--market-hours-only",
+        dest="market_hours_only",
+        action="store_true",
+        help="Restrict live polling to market hours in the configured market timezone",
+    )
 
     fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of Polygon minute aggregates to CSV")
     fetch_day.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
@@ -63,7 +79,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "replay":
         engine = ReplayEngine(config=config, logger=logger)
-        result = engine.run(csv_path=args.csv or None, export_path=args.export or None)
+        result = engine.run(
+            csv_path=args.csv or None,
+            export_path=args.export or None,
+            market_hours_only=args.market_hours_only,
+        )
         print(f"Replay complete: {len(result.evaluations)} evaluations, {len(result.alerts)} alerts, run_id={result.run_id}")
         return
 
@@ -83,7 +103,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "live":
-        _run_live_mode(config=config, logger=logger, poll_seconds=args.poll_seconds)
+        _run_live_mode(
+            config=config,
+            logger=logger,
+            poll_seconds=args.poll_seconds,
+            market_hours_only=args.market_hours_only,
+        )
         return
 
     parser.error(f"Unknown command: {args.command}")
@@ -130,7 +155,12 @@ def _parse_iso_date(value: str) -> date:
         raise SystemExit(f"Invalid date '{value}'. Expected YYYY-MM-DD.") from exc
 
 
-def _run_live_mode(config: AppConfig, logger: SQLiteLogger, poll_seconds: int) -> None:
+def _run_live_mode(
+    config: AppConfig,
+    logger: SQLiteLogger,
+    poll_seconds: int,
+    market_hours_only: bool = False,
+) -> None:
     if not config.polygon.api_key:
         raise SystemExit("Polygon API key is required for live mode.")
 
@@ -139,12 +169,27 @@ def _run_live_mode(config: AppConfig, logger: SQLiteLogger, poll_seconds: int) -
     alerter = TelegramAlerter(config)
     run_id = logger.create_run(mode="live", config=config, source="polygon")
     seen_keys: set[tuple[str, str, str]] = set()
+    enforce_market_hours = config.live.market_hours_only or market_hours_only
+    market_timezone = ZoneInfo(config.app.market_timezone)
+    market_open = parse_clock_time(config.live.market_open_time, field_name="live.market_open_time")
+    market_close = parse_clock_time(config.live.market_close_time, field_name="live.market_close_time")
+
+    if enforce_market_hours:
+        print(
+            "Live mode market-hours gate enabled for "
+            f"{config.app.market_timezone}: {config.live.market_open_time}-{config.live.market_close_time}"
+        )
 
     while True:
+        cycle_now = datetime.now(tz=UTC)
+        if enforce_market_hours and not is_within_market_hours(cycle_now, market_timezone, market_open, market_close):
+            time.sleep(max(5, poll_seconds))
+            continue
+
         all_evaluations: list[SetupEvaluation] = []
         all_alerts: list[AlertRecord] = []
         for symbol in config.app.symbols:
-            end = datetime.now(tz=UTC)
+            end = cycle_now
             start = end - timedelta(minutes=config.live.lookback_minutes)
             candles = adapter.get_historical_candles(symbol, timeframe=Timeframe.ONE_MINUTE, start=start, end=end)
             evaluations, _, _ = evaluate_symbol(candles, config)

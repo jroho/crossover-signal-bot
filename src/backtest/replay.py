@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from src.alerts import TelegramAlerter, format_alert
 from src.config import AppConfig
 from src.data import CsvReplayAdapter
-from src.models import AlertRecord, ReplayResult
+from src.market_hours import is_within_market_hours, parse_clock_time
+from src.models import AlertRecord, Candle, ReplayResult
 from src.signals import evaluate_symbol
 from src.storage import SQLiteLogger, export_alerts_to_csv, export_evaluations_to_csv
 
@@ -21,9 +24,16 @@ class ReplayEngine:
         self.logger = logger or SQLiteLogger(config.storage.sqlite_path)
         self.alerter = alerter or TelegramAlerter(config)
 
-    def run(self, csv_path: str | None = None, export_path: str | None = None) -> ReplayResult:
+    def run(
+        self,
+        csv_path: str | None = None,
+        export_path: str | None = None,
+        market_hours_only: bool = False,
+    ) -> ReplayResult:
         source_path = csv_path or self.config.replay.csv_path
         candles = self.adapter.load_candles(source_path, self.config.app.symbols)
+        if market_hours_only:
+            candles = self._filter_market_hours(candles)
         evaluations, _, _ = evaluate_symbol(candles, self.config)
 
         alerts: list[AlertRecord] = []
@@ -62,3 +72,13 @@ class ReplayEngine:
             export_evaluations_to_csv(evaluations, self.config.storage.evaluation_csv_path)
 
         return ReplayResult(run_id=run_id, evaluations=evaluations, alerts=alerts)
+
+    def _filter_market_hours(self, candles: list[Candle]) -> list[Candle]:
+        market_timezone = ZoneInfo(self.config.app.market_timezone)
+        market_open = parse_clock_time(self.config.live.market_open_time, field_name="live.market_open_time")
+        market_close = parse_clock_time(self.config.live.market_close_time, field_name="live.market_close_time")
+        return [
+            candle
+            for candle in candles
+            if is_within_market_hours(candle.timestamp, market_timezone, market_open, market_close)
+        ]

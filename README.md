@@ -71,6 +71,12 @@ Run replay:
 signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv
 ```
 
+Run replay during the configured market window only:
+
+```bash
+signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv --market
+```
+
 Run replay and export reviewed rows:
 
 ```bash
@@ -90,6 +96,25 @@ Run minimal live polling:
 ```bash
 signal-bot live --config config.toml --poll-seconds 60
 ```
+
+Restrict live polling to market hours in the configured market timezone:
+
+```bash
+signal-bot live --config config.toml --poll-seconds 60 --market
+```
+
+`--market-hours-only` still works as a compatibility alias.
+
+Default market-hours window in config:
+
+```toml
+[live]
+market_hours_only = true
+market_open_time = "09:30"
+market_close_time = "15:45"
+```
+
+This window is interpreted in `app.market_timezone`, which defaults to `America/New_York`.
 
 Export prior SQLite evaluations to CSV:
 
@@ -126,3 +151,5 @@ Tests cover:
 - alert formatting
 - replay determinism
 - Polygon bootstrap command behavior
+- live market-hours gating
+- replay market-hours gating
