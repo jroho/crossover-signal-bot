@@ -73,7 +73,6 @@ class PolygonConfig:
 class LiveConfig:
     lookback_minutes: int = 180
     poll_seconds: int = 60
-    market_hours_only: bool = False
     market_open_time: str = "09:30"
     market_close_time: str = "15:45"
 
@@ -114,10 +113,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
 
     telegram = {**raw.get("telegram", {})}
     polygon = {**raw.get("polygon", {})}
+    live = {**raw.get("live", {})}
 
     telegram["bot_token"] = os.getenv("TELEGRAM_BOT_TOKEN", telegram.get("bot_token", ""))
     telegram["chat_id"] = os.getenv("TELEGRAM_CHAT_ID", telegram.get("chat_id", ""))
     polygon["api_key"] = os.getenv("POLYGON_API_KEY", polygon.get("api_key", ""))
+
+    # Keep loading older config files gracefully even though alert gating is now always market-hours-only.
+    live.pop("market_hours_only", None)
 
     return AppConfig(
         app=_build_dataclass(AppSection, raw.get("app")),
@@ -129,5 +132,5 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         replay=_build_dataclass(ReplayConfig, raw.get("replay")),
         telegram=_build_dataclass(TelegramConfig, telegram),
         polygon=_build_dataclass(PolygonConfig, polygon),
-        live=_build_dataclass(LiveConfig, raw.get("live")),
+        live=_build_dataclass(LiveConfig, live),
     )

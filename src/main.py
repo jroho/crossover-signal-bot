@@ -31,24 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     replay.add_argument("--csv", default="", help="Replay CSV path")
     replay.add_argument("--export", default="", help="Optional evaluation CSV export path")
-    replay.add_argument(
-        "--market",
-        "--market-hours-only",
-        dest="market_hours_only",
-        action="store_true",
-        help="Restrict replay to market hours in the configured market timezone",
-    )
 
     live = subparsers.add_parser("live", help="Run minimal live polling with Polygon")
     live.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     live.add_argument("--poll-seconds", type=int, default=60, help="Polling interval in seconds")
-    live.add_argument(
-        "--market",
-        "--market-hours-only",
-        dest="market_hours_only",
-        action="store_true",
-        help="Restrict live polling to market hours in the configured market timezone",
-    )
 
     fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of replay-compatible Polygon minute candles to CSV")
     fetch_day.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
@@ -81,7 +67,6 @@ def main(argv: list[str] | None = None) -> None:
         result = engine.run(
             csv_path=args.csv or None,
             export_path=args.export or None,
-            market_hours_only=args.market_hours_only,
         )
         print(f"Replay complete: {len(result.evaluations)} evaluations, {len(result.alerts)} alerts, run_id={result.run_id}")
         return
@@ -109,7 +94,6 @@ def main(argv: list[str] | None = None) -> None:
             config=config,
             logger=logger,
             poll_seconds=args.poll_seconds,
-            market_hours_only=args.market_hours_only,
         )
         return
 
@@ -163,7 +147,6 @@ def _run_live_mode(
     config: AppConfig,
     logger: SQLiteLogger,
     poll_seconds: int,
-    market_hours_only: bool = False,
 ) -> None:
     if not config.polygon.api_key:
         raise SystemExit("Polygon API key is required for live mode.")
@@ -173,22 +156,19 @@ def _run_live_mode(
     alerter = TelegramAlerter(config)
     run_id = logger.create_run(mode="live", config=config, source="polygon")
     seen_keys: set[tuple[str, str, str]] = set()
-    enforce_market_hours = config.live.market_hours_only or market_hours_only
     market_timezone = ZoneInfo(config.app.market_timezone)
     market_open = parse_clock_time(config.live.market_open_time, field_name="live.market_open_time")
     market_close = parse_clock_time(config.live.market_close_time, field_name="live.market_close_time")
 
-    if enforce_market_hours:
-        print(
-            "Live mode market-hours gate enabled for "
-            f"{config.app.market_timezone}: {config.live.market_open_time}-{config.live.market_close_time}"
-        )
+    print(
+        "Live alert window uses "
+        f"{config.app.market_timezone}: {config.live.market_open_time}-{config.live.market_close_time}. "
+        "Calculations keep full fetched history; alert delivery is gated to that window."
+    )
 
     while True:
         cycle_now = datetime.now(tz=UTC)
-        if enforce_market_hours and not is_within_market_hours(cycle_now, market_timezone, market_open, market_close):
-            time.sleep(max(5, poll_seconds))
-            continue
+        can_emit_alerts = is_within_market_hours(cycle_now, market_timezone, market_open, market_close)
 
         all_evaluations: list[SetupEvaluation] = []
         all_alerts: list[AlertRecord] = []
@@ -206,7 +186,11 @@ def _run_live_mode(
                 if dedupe_key in seen_keys:
                     continue
                 seen_keys.add(dedupe_key)
-                if evaluation.grade.value in set(config.grading.alert_grades) and evaluation.strike_bias.value != "skip":
+                if (
+                    can_emit_alerts
+                    and evaluation.grade.value in set(config.grading.alert_grades)
+                    and evaluation.strike_bias.value != "skip"
+                ):
                     payload = format_alert(evaluation)
                     delivered, transport_message = alerter.send(payload)
                     evaluation.alert_sent = delivered
@@ -249,6 +233,10 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
                 sma30_value=row["sma30_value"],
                 sma_trend_relation=row["sma_trend_relation"],
                 sma_cross_signal=row["sma_cross_signal"] if "sma_cross_signal" in row.keys() else "none",
+                sma_cross_status=row["sma_cross_status"] if "sma_cross_status" in row.keys() else "none",
+                sma_cross_time=datetime.fromisoformat(row["sma_cross_time"]) if ("sma_cross_time" in row.keys() and row["sma_cross_time"]) else None,
+                sma15_slope=row["sma15_slope"] if "sma15_slope" in row.keys() else None,
+                sma30_slope=row["sma30_slope"] if "sma30_slope" in row.keys() else None,
                 rvgi=row["rvgi"],
                 rvgi_sma=row["rvgi_sma"],
                 rvgi_vs_sma=row["rvgi_vs_sma"],
@@ -277,4 +265,3 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
 
 if __name__ == "__main__":
     main()
-

@@ -7,16 +7,20 @@ from src.models import AlertPayload, Direction, SetupEvaluation
 
 
 def format_alert(evaluation: SetupEvaluation) -> AlertPayload:
-    title = f"{evaluation.symbol} {evaluation.timeframe.value} {evaluation.direction.value.upper()} ALERT"
+    cross_detail = evaluation.sma_cross_signal
+    if evaluation.sma_cross_status:
+        cross_detail = f"{cross_detail} ({evaluation.sma_cross_status})"
     message = "\n".join(
         [
-            title,
+            f"{evaluation.symbol} {evaluation.timeframe.value} {evaluation.direction.value.upper()} ALERT",
             f"Price: {evaluation.last_price:.2f}",
             f"Grade: {evaluation.grade.value}",
             f"VWAP: {evaluation.vwap_relation}",
             f"EMA 9: {evaluation.ema9_relation}",
-            f"15/30 Cross: {evaluation.sma_cross_signal}",
+            f"15/30 Cross: {cross_detail}",
             f"15/30 Trend: {evaluation.sma_trend_relation}",
+            f"15 SMA slope: {evaluation.sma15_slope if evaluation.sma15_slope is not None else 'unknown'}",
+            f"30 SMA slope: {evaluation.sma30_slope if evaluation.sma30_slope is not None else 'unknown'}",
             f"RVGI Sign: {evaluation.rvgi_sign}",
             f"RVGI vs RVGI SMA: {evaluation.rvgi_vs_sma}",
             f"Volume: {evaluation.volume_grade}",
@@ -34,7 +38,7 @@ def format_alert(evaluation: SetupEvaluation) -> AlertPayload:
         direction=evaluation.direction,
         grade=evaluation.grade,
         strike_bias=evaluation.strike_bias,
-        title=title,
+        title=f"{evaluation.symbol} {evaluation.timeframe.value} {evaluation.direction.value.upper()} ALERT",
         message=message,
     )
 

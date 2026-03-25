@@ -84,6 +84,10 @@ class SetupEvaluation:
     sma30_value: float | None
     sma_trend_relation: str
     sma_cross_signal: str
+    sma_cross_status: str
+    sma_cross_time: datetime | None
+    sma15_slope: float | None
+    sma30_slope: float | None
     rvgi: float | None
     rvgi_sma: float | None
     rvgi_vs_sma: str
@@ -119,6 +123,10 @@ class SetupEvaluation:
             "sma30_value": self.sma30_value,
             "sma_trend_relation": self.sma_trend_relation,
             "sma_cross_signal": self.sma_cross_signal,
+            "sma_cross_status": self.sma_cross_status,
+            "sma_cross_time": self.sma_cross_time.isoformat() if self.sma_cross_time else None,
+            "sma15_slope": self.sma15_slope,
+            "sma30_slope": self.sma30_slope,
             "rvgi": self.rvgi,
             "rvgi_sma": self.rvgi_sma,
             "rvgi_vs_sma": self.rvgi_vs_sma,

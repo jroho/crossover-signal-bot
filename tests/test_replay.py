@@ -1,8 +1,43 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from src.backtest import ReplayEngine
 from src.main import build_parser
+from src.models import Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
+
+
+def _evaluation(timestamp: datetime) -> SetupEvaluation:
+    return SetupEvaluation(
+        symbol="QQQ",
+        timestamp=timestamp,
+        timeframe=Timeframe.FIVE_MINUTE,
+        direction=Direction.BULL,
+        last_price=505.0,
+        vwap_relation="above",
+        ema9_relation="above",
+        sma15_value=504.0,
+        sma30_value=502.0,
+        sma_trend_relation="bullish",
+        sma_cross_signal="bull",
+        sma_cross_status="active",
+        sma_cross_time=timestamp,
+        sma15_slope=0.3,
+        sma30_slope=0.1,
+        rvgi=0.4,
+        rvgi_sma=0.2,
+        rvgi_vs_sma="above",
+        rvgi_sign="positive",
+        volume=2500,
+        recent_volume_avg=1800,
+        rolling_volume_avg=1700,
+        volume_grade="strong",
+        one_min_agreement="yes",
+        grade=Grade.A,
+        strike_bias=StrikeBias.ATM,
+        strike_bias_reason="default",
+    )
 
 
 def test_replay_is_deterministic(base_config, sample_csv_path, tmp_path: Path):
@@ -38,37 +73,23 @@ def test_replay_is_deterministic(base_config, sample_csv_path, tmp_path: Path):
     assert any(item.direction.value == "bear" and item.grade.value in {"A", "B"} for item in result_one.evaluations)
 
 
-def test_replay_parser_accepts_market_flag():
+def test_replay_parser_rejects_market_flag():
     parser = build_parser()
-    args = parser.parse_args(["replay", "--market"])
-
-    assert args.command == "replay"
-    assert args.market_hours_only is True
+    with pytest.raises(SystemExit):
+        parser.parse_args(["replay", "--market"])
 
 
-def test_replay_market_filter_keeps_only_market_window(base_config, tmp_path: Path):
-    csv_path = tmp_path / "replay_market_window.csv"
-    csv_path.write_text(
-        "\n".join(
-            [
-                "timestamp,open,high,low,close,volume,symbol",
-                "2026-03-24T13:29:00+00:00,100,101,99,100.5,1000,QQQ",
-                "2026-03-24T13:30:00+00:00,101,102,100,101.5,1100,QQQ",
-                "2026-03-24T19:45:00+00:00,102,103,101,102.5,1200,QQQ",
-                "2026-03-24T19:46:00+00:00,103,104,102,103.5,1300,QQQ",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
+def test_replay_keeps_premarket_evaluations_but_alerts_only_market_hours(base_config, monkeypatch):
     engine = ReplayEngine(base_config)
-    candles = engine.adapter.load_candles(str(csv_path), ["QQQ"])
-    filtered = engine._filter_market_hours(candles)
+    monkeypatch.setattr(engine.adapter, "load_candles", lambda path, symbols: [])
+    premarket = _evaluation(datetime(2026, 3, 24, 13, 29, tzinfo=UTC))
+    market = _evaluation(datetime(2026, 3, 24, 13, 30, tzinfo=UTC))
+    monkeypatch.setattr("src.backtest.replay.evaluate_symbol", lambda candles, config: ([premarket, market], None, None))
 
-    assert [candle.timestamp for candle in filtered] == [
-        datetime(2026, 3, 24, 13, 30, tzinfo=UTC),
-        datetime(2026, 3, 24, 19, 45, tzinfo=UTC),
-    ]
+    result = engine.run(csv_path="ignored.csv")
+
+    assert [item.timestamp for item in result.evaluations] == [premarket.timestamp, market.timestamp]
+    assert [item.evaluation.timestamp for item in result.alerts] == [market.timestamp]
 
 
 def test_replay_resolves_legacy_five_minute_fixture_name(base_config, tmp_path: Path):

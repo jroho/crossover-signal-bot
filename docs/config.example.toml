@@ -51,6 +51,7 @@ api_key = ""
 [live]
 lookback_minutes = 180
 poll_seconds = 60
-market_hours_only = false
 market_open_time = "09:30"
 market_close_time = "15:45"
+
+

@@ -42,6 +42,10 @@ class SQLiteLogger:
                     sma30_value REAL,
                     sma_trend_relation TEXT,
                     sma_cross_signal TEXT,
+                    sma_cross_status TEXT,
+                    sma_cross_time TEXT,
+                    sma15_slope REAL,
+                    sma30_slope REAL,
                     rvgi REAL,
                     rvgi_sma REAL,
                     rvgi_vs_sma TEXT,
@@ -80,7 +84,17 @@ class SQLiteLogger:
                 );
                 """
             )
-            _ensure_columns(connection, "evaluated_setups", {"sma_cross_signal": "TEXT"})
+            _ensure_columns(
+                connection,
+                "evaluated_setups",
+                {
+                    "sma_cross_signal": "TEXT",
+                    "sma_cross_status": "TEXT",
+                    "sma_cross_time": "TEXT",
+                    "sma15_slope": "REAL",
+                    "sma30_slope": "REAL",
+                },
+            )
 
     def create_run(self, *, mode: str, config: AppConfig, source: str) -> str:
         run_id = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S%f")
@@ -110,6 +124,10 @@ class SQLiteLogger:
                     record["sma30_value"],
                     record["sma_trend_relation"],
                     record["sma_cross_signal"],
+                    record["sma_cross_status"],
+                    record["sma_cross_time"],
+                    record["sma15_slope"],
+                    record["sma30_slope"],
                     record["rvgi"],
                     record["rvgi_sma"],
                     record["rvgi_vs_sma"],
@@ -139,12 +157,13 @@ class SQLiteLogger:
                 INSERT INTO evaluated_setups (
                     run_id, symbol, datetime, timeframe, direction, last_price,
                     vwap_relation, ema9_relation, sma15_value, sma30_value, sma_trend_relation,
-                    sma_cross_signal, rvgi, rvgi_sma, rvgi_vs_sma, rvgi_sign, volume, recent_volume_avg,
+                    sma_cross_signal, sma_cross_status, sma_cross_time, sma15_slope, sma30_slope,
+                    rvgi, rvgi_sma, rvgi_vs_sma, rvgi_sign, volume, recent_volume_avg,
                     rolling_volume_avg, volume_grade, one_min_agreement, grade, strike_bias,
                     strike_bias_reason, passed_conditions, weak_conditions, failed_conditions,
                     rationale, alert_sent, forward_return_3m, forward_return_5m,
                     forward_return_10m, forward_return_15m
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

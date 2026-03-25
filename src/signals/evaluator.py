@@ -1,56 +1,87 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import pandas as pd
 
 from src.config import AppConfig
 from src.grading import grade_setup
-from src.indicators import IndicatorBundle, build_indicator_bundle
+from src.indicators import IndicatorBundle, build_indicator_bundle, compute_indicator_states, resample_to_active_five_minute
 from src.models import Candle, Direction, Grade, IndicatorState, OneMinuteConfirmation, SetupEvaluation, StrikeBias, Timeframe
+
+
+@dataclass(frozen=True)
+class SmaCrossContext:
+    signal: str
+    status: str
+    cross_time: datetime | None
+    sma15_slope: float | None
+    sma30_slope: float | None
 
 
 def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[SetupEvaluation], IndicatorBundle, IndicatorBundle]:
     one_min_bundle, five_min_bundle = build_indicator_bundle(candles, config)
     evaluations: list[SetupEvaluation] = []
-    five_min_by_symbol: dict[str, list[Candle]] = defaultdict(list)
-    for candle in five_min_bundle.candles:
-        five_min_by_symbol[candle.symbol].append(candle)
+    one_min_by_symbol: dict[str, list[Candle]] = defaultdict(list)
+    for candle in sorted(candles, key=lambda item: (item.symbol, item.timestamp)):
+        one_min_by_symbol[candle.symbol].append(candle)
 
-    for symbol, symbol_candles in five_min_by_symbol.items():
+    for symbol, symbol_candles in one_min_by_symbol.items():
         one_min_frame = one_min_bundle.dataframe[one_min_bundle.dataframe["symbol"] == symbol].copy()
-        for index, candle in enumerate(symbol_candles):
-            state = five_min_bundle.states[(symbol, pd.Timestamp(candle.timestamp))]
-            previous = None
-            if index > 0:
-                previous = five_min_bundle.states[(symbol, pd.Timestamp(symbol_candles[index - 1].timestamp))]
-            sma_cross_signal = _sma_cross_signal(state, previous)
+        last_cross_signal = "none"
+        last_cross_time: datetime | None = None
+        previous_five_min_state: IndicatorState | None = None
+
+        for index, minute_candle in enumerate(symbol_candles):
+            active_five_minute_candles = resample_to_active_five_minute(symbol_candles[: index + 1])
+            if not active_five_minute_candles:
+                continue
+
+            active_five_minute_bundle = compute_indicator_states(active_five_minute_candles, config)
+            current_five_minute_candle = active_five_minute_bundle.candles[-1]
+            state = active_five_minute_bundle.states[(symbol, pd.Timestamp(current_five_minute_candle.timestamp))]
+            cross_context = _build_sma_cross_context(
+                current=state,
+                previous=previous_five_min_state,
+                last_cross_signal=last_cross_signal,
+                last_cross_time=last_cross_time,
+            )
+            if cross_context.status == "fresh":
+                last_cross_signal = cross_context.signal
+                last_cross_time = cross_context.cross_time
+            elif cross_context.status == "derived" and last_cross_signal == "none":
+                last_cross_signal = cross_context.signal
 
             for direction in (Direction.BULL, Direction.BEAR):
                 one_min_confirmation = _derive_one_min_confirmation(
                     one_min_frame=one_min_frame,
-                    timestamp=pd.Timestamp(candle.timestamp),
+                    timestamp=pd.Timestamp(minute_candle.timestamp),
                     direction=direction,
                     config=config,
                 )
                 evaluation = SetupEvaluation(
                     symbol=symbol,
-                    timestamp=candle.timestamp,
+                    timestamp=minute_candle.timestamp,
                     timeframe=Timeframe.FIVE_MINUTE,
                     direction=direction,
-                    last_price=candle.close,
-                    vwap_relation=_relation(candle.close, state.vwap),
-                    ema9_relation=_relation(candle.close, state.ema9),
+                    last_price=minute_candle.close,
+                    vwap_relation=_relation(current_five_minute_candle.close, state.vwap),
+                    ema9_relation=_relation(current_five_minute_candle.close, state.ema9),
                     sma15_value=state.sma15,
                     sma30_value=state.sma30,
                     sma_trend_relation=_sma_relation(state.sma15, state.sma30),
-                    sma_cross_signal=sma_cross_signal,
+                    sma_cross_signal=cross_context.signal,
+                    sma_cross_status=cross_context.status,
+                    sma_cross_time=cross_context.cross_time,
+                    sma15_slope=cross_context.sma15_slope,
+                    sma30_slope=cross_context.sma30_slope,
                     rvgi=state.rvgi,
                     rvgi_sma=state.rvgi_sma,
                     rvgi_vs_sma=_rvgi_relation(state.rvgi, state.rvgi_sma),
                     rvgi_sign=_sign_label(state.rvgi),
-                    volume=candle.volume,
+                    volume=current_five_minute_candle.volume,
                     recent_volume_avg=state.recent_volume_avg,
                     rolling_volume_avg=state.rolling_volume_avg,
                     volume_grade=state.volume_grade.value,
@@ -59,24 +90,94 @@ def evaluate_symbol(candles: list[Candle], config: AppConfig) -> tuple[list[Setu
                     strike_bias=StrikeBias.SKIP,
                     strike_bias_reason="",
                 )
-                evaluation = grade_setup(evaluation, state, previous, one_min_confirmation, config)
+                evaluation = grade_setup(evaluation, state, previous_five_min_state, one_min_confirmation, config)
                 _apply_forward_returns(evaluation, one_min_frame)
                 evaluations.append(evaluation)
+
+            previous_five_min_state = state
+
     evaluations.sort(key=lambda item: (item.symbol, item.timestamp, item.direction.value))
     return evaluations, one_min_bundle, five_min_bundle
 
 
-# The 5m 15/30 crossover is the primary trigger; 1m remains confirmation-only.
-def _sma_cross_signal(current: IndicatorState, previous: IndicatorState | None) -> str:
+# The 5m 15/30 crossover owns the directional regime; 1m remains confirmation-only.
+def _build_sma_cross_context(
+    *,
+    current: IndicatorState,
+    previous: IndicatorState | None,
+    last_cross_signal: str,
+    last_cross_time: datetime | None,
+) -> SmaCrossContext:
     if previous is None:
-        return "none"
+        return SmaCrossContext(signal="none", status="none", cross_time=None, sma15_slope=None, sma30_slope=None)
     if any(value is None for value in (current.sma15, current.sma30, previous.sma15, previous.sma30)):
-        return "warmup"
-    if float(previous.sma15) <= float(previous.sma30) and float(current.sma15) > float(current.sma30):
+        return SmaCrossContext(signal="none", status="warmup", cross_time=None, sma15_slope=None, sma30_slope=None)
+
+    sma15_slope = float(current.sma15) - float(previous.sma15)
+    sma30_slope = float(current.sma30) - float(previous.sma30)
+    prev_delta = float(previous.sma15) - float(previous.sma30)
+    curr_delta = float(current.sma15) - float(current.sma30)
+    fresh_signal = _cross_direction(prev_delta, curr_delta)
+    if fresh_signal != "none":
+        cross_time = _interpolate_cross_time(previous.timestamp, current.timestamp, prev_delta, curr_delta)
+        return SmaCrossContext(
+            signal=fresh_signal,
+            status="fresh",
+            cross_time=cross_time,
+            sma15_slope=sma15_slope,
+            sma30_slope=sma30_slope,
+        )
+
+    if last_cross_signal in {Direction.BULL.value, Direction.BEAR.value}:
+        return SmaCrossContext(
+            signal=last_cross_signal,
+            status="active",
+            cross_time=last_cross_time,
+            sma15_slope=sma15_slope,
+            sma30_slope=sma30_slope,
+        )
+
+    derived_signal = _signal_from_delta(curr_delta)
+    if derived_signal != "none":
+        return SmaCrossContext(
+            signal=derived_signal,
+            status="derived",
+            cross_time=None,
+            sma15_slope=sma15_slope,
+            sma30_slope=sma30_slope,
+        )
+    return SmaCrossContext(
+        signal="none",
+        status="none",
+        cross_time=None,
+        sma15_slope=sma15_slope,
+        sma30_slope=sma30_slope,
+    )
+
+
+def _cross_direction(previous_delta: float, current_delta: float, epsilon: float = 1e-9) -> str:
+    if previous_delta < -epsilon and current_delta >= -epsilon:
         return Direction.BULL.value
-    if float(previous.sma15) >= float(previous.sma30) and float(current.sma15) < float(current.sma30):
+    if previous_delta > epsilon and current_delta <= epsilon:
         return Direction.BEAR.value
     return "none"
+
+
+def _signal_from_delta(delta: float, epsilon: float = 1e-9) -> str:
+    if delta > epsilon:
+        return Direction.BULL.value
+    if delta < -epsilon:
+        return Direction.BEAR.value
+    return "none"
+
+
+def _interpolate_cross_time(previous_time: datetime, current_time: datetime, previous_delta: float, current_delta: float) -> datetime:
+    delta_change = current_delta - previous_delta
+    if abs(delta_change) < 1e-12:
+        return current_time
+    fraction = -previous_delta / delta_change
+    fraction = max(0.0, min(1.0, fraction))
+    return previous_time + ((current_time - previous_time) * fraction)
 
 
 def _derive_one_min_confirmation(

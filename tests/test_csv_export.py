@@ -17,6 +17,10 @@ def _build_evaluation() -> SetupEvaluation:
         sma30_value=583.0,
         sma_trend_relation="bullish",
         sma_cross_signal="bull",
+        sma_cross_status="active",
+        sma_cross_time=datetime(2026, 3, 24, 15, 20, tzinfo=UTC),
+        sma15_slope=0.35,
+        sma30_slope=0.18,
         rvgi=0.22,
         rvgi_sma=0.18,
         rvgi_vs_sma="above",
@@ -43,9 +47,15 @@ def test_export_evaluations_to_csv_adds_market_time_columns(tmp_path):
 
     contents = output_path.read_text(encoding="utf-8")
     assert "datetime_market" in contents
+    assert "sma_cross_time_market" in contents
     assert "market_timezone" in contents
     assert "sma_cross_signal" in contents
-    assert "2026-03-24T11:35:00-04:00" in contents
+    assert "sma_cross_status" in contents
+    assert "sma_cross_time" in contents
+    assert "sma15_slope" in contents
+    assert "sma30_slope" in contents
+    assert "2026-03-24 11:35:00 AM EDT" in contents
+    assert "2026-03-24 11:20:00 AM EDT" in contents
     assert "America/New_York" in contents
 
 
@@ -72,7 +82,13 @@ def test_export_alerts_to_csv_adds_market_time_columns(tmp_path):
 
     contents = output_path.read_text(encoding="utf-8")
     assert "datetime_market" in contents
+    assert "sma_cross_time_market" in contents
     assert "market_timezone" in contents
     assert "sma_cross_signal" in contents
-    assert "2026-03-24T11:35:00-04:00" in contents
+    assert "sma_cross_status" in contents
+    assert "sma_cross_time" in contents
+    assert "sma15_slope" in contents
+    assert "sma30_slope" in contents
+    assert "2026-03-24 11:35:00 AM EDT" in contents
+    assert "2026-03-24 11:20:00 AM EDT" in contents
     assert "America/New_York" in contents

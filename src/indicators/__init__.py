@@ -3,6 +3,7 @@ from .calculations import (
     build_indicator_bundle,
     candles_to_dataframe,
     compute_indicator_states,
+    resample_to_active_five_minute,
     resample_to_five_minute,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "build_indicator_bundle",
     "candles_to_dataframe",
     "compute_indicator_states",
+    "resample_to_active_five_minute",
     "resample_to_five_minute",
 ]

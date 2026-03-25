@@ -49,7 +49,7 @@ def resample_to_five_minute(candles: list[Candle]) -> list[Candle]:
     for symbol, group in frame.groupby("symbol", sort=True):
         resampled = (
             group.set_index("timestamp")
-            .resample("5min", label="right", closed="right")
+            .resample("5min", label="right", closed="left")
             .agg(
                 open=("open", "first"),
                 high=("high", "max"),
@@ -63,6 +63,49 @@ def resample_to_five_minute(candles: list[Candle]) -> list[Candle]:
         resampled = resampled[resampled["sample_count"] == 5].reset_index()
         resampled["symbol"] = symbol
         result_frames.append(resampled)
+
+    if not result_frames:
+        return []
+
+    merged = pd.concat(result_frames, ignore_index=True).sort_values(["symbol", "timestamp"])
+    return [
+        Candle(
+            symbol=row.symbol,
+            timeframe=Timeframe.FIVE_MINUTE,
+            timestamp=row.timestamp.to_pydatetime(),
+            open=float(row.open),
+            high=float(row.high),
+            low=float(row.low),
+            close=float(row.close),
+            volume=float(row.volume),
+        )
+        for row in merged.itertuples(index=False)
+    ]
+
+
+def resample_to_active_five_minute(candles: list[Candle]) -> list[Candle]:
+    frame = candles_to_dataframe(candles)
+    if frame.empty:
+        return []
+
+    result_frames: list[pd.DataFrame] = []
+    for symbol, group in frame.groupby("symbol", sort=True):
+        grouped = group.copy()
+        grouped["bucket_start"] = grouped["timestamp"].dt.floor("5min")
+        snapshots = (
+            grouped.groupby("bucket_start", sort=True)
+            .agg(
+                timestamp=("timestamp", "max"),
+                open=("open", "first"),
+                high=("high", "max"),
+                low=("low", "min"),
+                close=("close", "last"),
+                volume=("volume", "sum"),
+            )
+            .reset_index(drop=True)
+        )
+        snapshots["symbol"] = symbol
+        result_frames.append(snapshots)
 
     if not result_frames:
         return []

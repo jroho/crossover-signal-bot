@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from src.main import build_parser
 from src.market_hours import is_within_market_hours
 
@@ -49,17 +51,10 @@ def test_market_hours_gate_skips_weekends():
     ) is False
 
 
-def test_live_parser_accepts_market_flag():
+def test_live_parser_rejects_market_flags():
     parser = build_parser()
-    args = parser.parse_args(["live", "--market"])
 
-    assert args.command == "live"
-    assert args.market_hours_only is True
-
-
-def test_live_parser_accepts_legacy_market_hours_only_flag():
-    parser = build_parser()
-    args = parser.parse_args(["live", "--market-hours-only"])
-
-    assert args.command == "live"
-    assert args.market_hours_only is True
+    with pytest.raises(SystemExit):
+        parser.parse_args(["live", "--market"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["live", "--market-hours-only"])

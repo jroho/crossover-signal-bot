@@ -80,11 +80,7 @@ Run replay:
 signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv
 ```
 
-Run replay during the configured market window only:
-
-```bash
-signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv --market
-```
+Replay always keeps the full 1m history, including premarket candles, so 5m indicators have full context. Alerts are emitted only for evaluations whose timestamps fall inside the configured market window.
 
 Run replay and export reviewed rows:
 
@@ -114,19 +110,12 @@ Run minimal live polling:
 signal-bot live --config config.toml --poll-seconds 60
 ```
 
-Restrict live polling to market hours in the configured market timezone:
-
-```bash
-signal-bot live --config config.toml --poll-seconds 60 --market
-```
-
-`--market-hours-only` still works as a compatibility alias.
+Live alert delivery is automatically gated to the configured market window. Calculations still use the full fetched lookback so premarket context can inform the opening regular-hours signals.
 
 Default market-hours window in config:
 
 ```toml
 [live]
-market_hours_only = true
 market_open_time = "09:30"
 market_close_time = "15:45"
 ```
@@ -169,7 +158,8 @@ Tests cover:
 - alert formatting
 - replay determinism
 - Polygon bootstrap command behavior
-- live market-hours gating
-- replay market-hours gating
+- live alert gating during market hours
+- replay alert gating during market hours while preserving full indicator history
+
 
 
