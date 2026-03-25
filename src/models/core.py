@@ -22,6 +22,12 @@ class Grade(str, Enum):
     C = "C"
 
 
+class OutcomeGrade(str, Enum):
+    A = "A"
+    B = "B"
+    C = "C"
+
+
 class VolumeGrade(str, Enum):
     STRONG = "strong"
     ACCEPTABLE = "acceptable"
@@ -35,6 +41,12 @@ class StrikeBias(str, Enum):
     ATM = "ATM"
     ONE_ITM = "+/-1 ITM"
     SKIP = "skip"
+
+
+class OutcomeResult(str, Enum):
+    WIN = "win"
+    LOSS = "loss"
+    FLAT = "flat"
 
 
 @dataclass(frozen=True)
@@ -109,6 +121,10 @@ class SetupEvaluation:
     forward_return_5m: float | None = None
     forward_return_10m: float | None = None
     forward_return_15m: float | None = None
+    forward_return_30m: float | None = None
+    pop_outcome: OutcomeResult | None = None
+    pop_outcome_horizon: str | None = None
+    pop_grade: OutcomeGrade | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -148,6 +164,10 @@ class SetupEvaluation:
             "forward_return_5m": self.forward_return_5m,
             "forward_return_10m": self.forward_return_10m,
             "forward_return_15m": self.forward_return_15m,
+            "forward_return_30m": self.forward_return_30m,
+            "pop_outcome": self.pop_outcome.value if self.pop_outcome else None,
+            "pop_outcome_horizon": self.pop_outcome_horizon,
+            "pop_grade": self.pop_grade.value if self.pop_grade else None,
         }
 
 

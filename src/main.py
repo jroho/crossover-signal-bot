@@ -12,7 +12,7 @@ from src.backtest import ReplayEngine
 from src.config import AppConfig, load_config
 from src.data import PolygonAdapter
 from src.market_hours import is_within_market_hours, parse_clock_time
-from src.models import AlertRecord, Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
+from src.models import AlertRecord, Direction, Grade, OutcomeGrade, OutcomeResult, SetupEvaluation, StrikeBias, Timeframe
 from src.signals import evaluate_symbol
 from src.storage import (
     SQLiteLogger,
@@ -258,6 +258,10 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
                 forward_return_5m=row["forward_return_5m"],
                 forward_return_10m=row["forward_return_10m"],
                 forward_return_15m=row["forward_return_15m"],
+                forward_return_30m=row["forward_return_30m"] if "forward_return_30m" in row.keys() else None,
+                pop_outcome=OutcomeResult(row["pop_outcome"]) if ("pop_outcome" in row.keys() and row["pop_outcome"]) else None,
+                pop_outcome_horizon=row["pop_outcome_horizon"] if ("pop_outcome_horizon" in row.keys() and row["pop_outcome_horizon"]) else None,
+                pop_grade=OutcomeGrade(row["pop_grade"]) if ("pop_grade" in row.keys() and row["pop_grade"]) else None,
             )
         )
     return evaluations
@@ -265,3 +269,4 @@ def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:
 
 if __name__ == "__main__":
     main()
+

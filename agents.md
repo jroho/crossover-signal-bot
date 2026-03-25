@@ -150,8 +150,8 @@ Use these defaults unless explicitly overridden by config:
 - SMA fast: 15
 - SMA slow: 30
 - Primary trigger: 5m SMA 15 / SMA 30 crossover
-- Bullish trigger: SMA 15 crosses above SMA 30 on the 5m chart
-- Bearish trigger: SMA 15 crosses below SMA 30 on the 5m chart
+- Bullish trigger: SMA 15 crosses above SMA 30 on the 5m candle
+- Bearish trigger: SMA 15 crosses below SMA 30 on the 5m candle
 - This 5m 15 / 30 crossover is the most important indicator in the system
 - If the crossover happens while the active 5m candle is still printing, it still counts as a valid 5m trigger for live awareness
 - 1m candles do not own the crossover logic; they are secondary confirmation only
@@ -177,7 +177,7 @@ A bullish setup is structurally valid when most or all are true:
 - 5m close > VWAP
 - 5m close > EMA 9
 - SMA 15 > SMA 30
-- the primary bullish trigger is SMA 15 crossing above SMA 30 on the 5m chart
+- the primary bullish trigger is SMA 15 crossing above SMA 30 on the 5m candle
 - if that crossover appears while the current 5m candle is still printing, it still counts as a 5m bullish trigger
 
 ## Bearish Structure Rules
@@ -185,7 +185,7 @@ A bearish setup is structurally valid when most or all are true:
 - 5m close < VWAP
 - 5m close < EMA 9
 - SMA 15 < SMA 30
-- the primary bearish trigger is SMA 15 crossing below SMA 30 on the 5m chart
+- the primary bearish trigger is SMA 15 crossing below SMA 30 on the 5m candle
 - if that crossover appears while the current 5m candle is still printing, it still counts as a 5m bearish trigger
 
 ## RVGI Interpretation

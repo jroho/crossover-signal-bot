@@ -66,7 +66,11 @@ class SQLiteLogger:
                     forward_return_3m REAL,
                     forward_return_5m REAL,
                     forward_return_10m REAL,
-                    forward_return_15m REAL
+                    forward_return_15m REAL,
+                    forward_return_30m REAL,
+                    pop_outcome TEXT,
+                    pop_outcome_horizon TEXT,
+                    pop_grade TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS alerts (
@@ -93,6 +97,10 @@ class SQLiteLogger:
                     "sma_cross_time": "TEXT",
                     "sma15_slope": "REAL",
                     "sma30_slope": "REAL",
+                    "forward_return_30m": "REAL",
+                    "pop_outcome": "TEXT",
+                    "pop_outcome_horizon": "TEXT",
+                    "pop_grade": "TEXT",
                 },
             )
 
@@ -149,6 +157,10 @@ class SQLiteLogger:
                     record["forward_return_5m"],
                     record["forward_return_10m"],
                     record["forward_return_15m"],
+                    record["forward_return_30m"],
+                    record["pop_outcome"],
+                    record["pop_outcome_horizon"],
+                    record["pop_grade"],
                 )
             )
         with sqlite3.connect(self.path) as connection:
@@ -162,8 +174,9 @@ class SQLiteLogger:
                     rolling_volume_avg, volume_grade, one_min_agreement, grade, strike_bias,
                     strike_bias_reason, passed_conditions, weak_conditions, failed_conditions,
                     rationale, alert_sent, forward_return_3m, forward_return_5m,
-                    forward_return_10m, forward_return_15m
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    forward_return_10m, forward_return_15m, forward_return_30m,
+                    pop_outcome, pop_outcome_horizon, pop_grade
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

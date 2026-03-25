@@ -71,6 +71,8 @@ def test_replay_is_deterministic(base_config, sample_csv_path, tmp_path: Path):
     assert export_one.read_text(encoding="utf-8") == export_two.read_text(encoding="utf-8")
     assert any(item.grade.value == "A" for item in result_one.evaluations)
     assert any(item.direction.value == "bear" and item.grade.value in {"A", "B"} for item in result_one.evaluations)
+    assert any(item.forward_return_30m is not None for item in result_one.evaluations)
+    assert any(item.pop_outcome is not None for item in result_one.evaluations)
 
 
 def test_replay_parser_rejects_market_flag():
@@ -110,3 +112,4 @@ def test_replay_resolves_legacy_five_minute_fixture_name(base_config, tmp_path: 
     resolved = engine._resolve_source_path(requested_path)
 
     assert resolved == actual_path
+

@@ -9,7 +9,13 @@ import pandas as pd
 from src.config import AppConfig
 from src.grading import grade_setup
 from src.indicators import IndicatorBundle, build_indicator_bundle, compute_indicator_states, resample_to_active_five_minute
-from src.models import Candle, Direction, Grade, IndicatorState, OneMinuteConfirmation, SetupEvaluation, StrikeBias, Timeframe
+from src.models import Candle, Direction, Grade, IndicatorState, OneMinuteConfirmation, OutcomeGrade, OutcomeResult, SetupEvaluation, StrikeBias, Timeframe
+
+POP_THRESHOLD = 0.0017
+POP_GRADE_B_THRESHOLD = POP_THRESHOLD * 2
+POP_GRADE_A_THRESHOLD = POP_THRESHOLD * 3
+OUTCOME_HORIZONS = (3, 5, 15, 30)
+FORWARD_RETURN_HORIZONS = (3, 5, 10, 15, 30)
 
 
 @dataclass(frozen=True)
@@ -218,7 +224,7 @@ def _apply_forward_returns(evaluation: SetupEvaluation, one_min_frame: pd.DataFr
         return
     current_price = float(current_rows.iloc[-1]["close"])
     sign = 1.0 if evaluation.direction == Direction.BULL else -1.0
-    for minutes in (3, 5, 10, 15):
+    for minutes in FORWARD_RETURN_HORIZONS:
         target = pd.Timestamp(evaluation.timestamp) + timedelta(minutes=minutes)
         future_rows = one_min_frame[one_min_frame["timestamp"] >= target]
         if future_rows.empty:
@@ -226,6 +232,44 @@ def _apply_forward_returns(evaluation: SetupEvaluation, one_min_frame: pd.DataFr
         future_price = float(future_rows.iloc[0]["close"])
         adjusted_return = sign * ((future_price - current_price) / current_price)
         setattr(evaluation, f"forward_return_{minutes}m", adjusted_return)
+
+    _apply_pop_outcome(evaluation)
+
+
+def _apply_pop_outcome(evaluation: SetupEvaluation) -> None:
+    outcome_returns = {minutes: getattr(evaluation, f"forward_return_{minutes}m") for minutes in OUTCOME_HORIZONS}
+    if any(value is None for value in outcome_returns.values()):
+        evaluation.pop_outcome = None
+        evaluation.pop_outcome_horizon = None
+        evaluation.pop_grade = None
+        return
+
+    for minutes in OUTCOME_HORIZONS:
+        value = outcome_returns[minutes]
+        if value is None:
+            continue
+        if value >= POP_THRESHOLD:
+            evaluation.pop_outcome = OutcomeResult.WIN
+            evaluation.pop_outcome_horizon = f"{minutes}m"
+            evaluation.pop_grade = _grade_pop_strength(max(outcome_returns.values()))
+            return
+        if value <= -POP_THRESHOLD:
+            evaluation.pop_outcome = OutcomeResult.LOSS
+            evaluation.pop_outcome_horizon = f"{minutes}m"
+            evaluation.pop_grade = None
+            return
+
+    evaluation.pop_outcome = OutcomeResult.FLAT
+    evaluation.pop_outcome_horizon = None
+    evaluation.pop_grade = None
+
+
+def _grade_pop_strength(max_favorable_return: float) -> OutcomeGrade:
+    if max_favorable_return >= POP_GRADE_A_THRESHOLD:
+        return OutcomeGrade.A
+    if max_favorable_return >= POP_GRADE_B_THRESHOLD:
+        return OutcomeGrade.B
+    return OutcomeGrade.C
 
 
 def _relation(price: float, reference: float | None) -> str:

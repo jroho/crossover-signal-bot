@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from src.models import AlertPayload, AlertRecord, Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
+from src.models import AlertPayload, AlertRecord, Direction, Grade, OutcomeGrade, OutcomeResult, SetupEvaluation, StrikeBias, Timeframe
 from src.storage.csv_export import export_alerts_to_csv, export_evaluations_to_csv
 
 
@@ -37,6 +37,14 @@ def _build_evaluation() -> SetupEvaluation:
         weak_conditions=["RVGI crossover is incomplete"],
         failed_conditions=[],
         rationale="Bullish structure is intact, but momentum confirmation is incomplete.",
+        forward_return_3m=0.0019,
+        forward_return_5m=0.0036,
+        forward_return_10m=0.0028,
+        forward_return_15m=0.0032,
+        forward_return_30m=0.0034,
+        pop_outcome=OutcomeResult.WIN,
+        pop_outcome_horizon="3m",
+        pop_grade=OutcomeGrade.B,
     )
 
 
@@ -54,9 +62,16 @@ def test_export_evaluations_to_csv_adds_market_time_columns(tmp_path):
     assert "sma_cross_time" in contents
     assert "sma15_slope" in contents
     assert "sma30_slope" in contents
+    assert "forward_return_30m" in contents
+    assert "pop_outcome" in contents
+    assert "pop_outcome_horizon" in contents
+    assert "pop_grade" in contents
     assert "2026-03-24 11:35:00 AM EDT" in contents
     assert "2026-03-24 11:20:00 AM EDT" in contents
     assert "America/New_York" in contents
+    assert "win" in contents
+    assert ",3m," in contents
+    assert ",B" in contents
 
 
 def test_export_alerts_to_csv_adds_market_time_columns(tmp_path):
@@ -89,6 +104,14 @@ def test_export_alerts_to_csv_adds_market_time_columns(tmp_path):
     assert "sma_cross_time" in contents
     assert "sma15_slope" in contents
     assert "sma30_slope" in contents
+    assert "forward_return_30m" in contents
+    assert "pop_outcome" in contents
+    assert "pop_outcome_horizon" in contents
+    assert "pop_grade" in contents
     assert "2026-03-24 11:35:00 AM EDT" in contents
     assert "2026-03-24 11:20:00 AM EDT" in contents
     assert "America/New_York" in contents
+    assert "win" in contents
+    assert ",3m," in contents
+    assert ",B" in contents
+
