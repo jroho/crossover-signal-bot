@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from src.alerts import TelegramAlerter, format_alert
 from src.backtest import ReplayEngine
@@ -11,7 +11,7 @@ from src.config import AppConfig, load_config
 from src.data import PolygonAdapter
 from src.models import AlertRecord, Direction, Grade, SetupEvaluation, StrikeBias, Timeframe
 from src.signals import evaluate_symbol
-from src.storage import SQLiteLogger, export_evaluations_to_csv
+from src.storage import SQLiteLogger, export_evaluations_to_csv, export_polygon_aggregate_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,22 +20,39 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     replay = subparsers.add_parser("replay", help="Run replay mode from local CSV")
+    replay.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     replay.add_argument("--csv", default="", help="Replay CSV path")
     replay.add_argument("--export", default="", help="Optional evaluation CSV export path")
 
     live = subparsers.add_parser("live", help="Run minimal live polling with Polygon")
+    live.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     live.add_argument("--poll-seconds", type=int, default=60, help="Polling interval in seconds")
 
+    fetch_day = subparsers.add_parser("fetch-day", help="Fetch one day of Polygon minute aggregates to CSV")
+    fetch_day.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
+    fetch_day.add_argument("-date", "--date", dest="day", required=True, help="Trading day in YYYY-MM-DD format")
+    fetch_day.add_argument(
+        "-multiplier",
+        "--multiplier",
+        type=int,
+        default=1,
+        help="Minute aggregate multiplier",
+    )
+    fetch_day.add_argument("--symbol", default="", help="Ticker symbol; defaults to the first configured symbol")
+    fetch_day.add_argument("--output", default="", help="Optional CSV output path")
+
     export_csv = subparsers.add_parser("export-csv", help="Export evaluations from the last run path")
+    export_csv.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     export_csv.add_argument("--output", required=True, help="Target CSV path")
 
-    subparsers.add_parser("init-db", help="Initialize SQLite schema")
+    init_db = subparsers.add_parser("init-db", help="Initialize SQLite schema")
+    init_db.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     return parser
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     config = load_config(args.config)
     logger = SQLiteLogger(config.storage.sqlite_path)
 
@@ -50,6 +67,16 @@ def main() -> None:
         print(f"Replay complete: {len(result.evaluations)} evaluations, {len(result.alerts)} alerts, run_id={result.run_id}")
         return
 
+    if args.command == "fetch-day":
+        _run_fetch_day_command(
+            config=config,
+            symbol=args.symbol,
+            day_text=args.day,
+            multiplier=args.multiplier,
+            output=args.output,
+        )
+        return
+
     if args.command == "export-csv":
         export_evaluations_to_csv(_read_evaluations_from_db(config.storage.sqlite_path), args.output)
         print(f"Exported evaluations to {args.output}")
@@ -60,6 +87,47 @@ def main() -> None:
         return
 
     parser.error(f"Unknown command: {args.command}")
+
+
+def _run_fetch_day_command(
+    config: AppConfig,
+    symbol: str,
+    day_text: str,
+    multiplier: int,
+    output: str,
+) -> None:
+    if not config.polygon.api_key:
+        raise SystemExit("Polygon API key is required for fetch-day.")
+    if multiplier < 1:
+        raise SystemExit("Multiplier must be greater than or equal to 1.")
+
+    requested_day = _parse_iso_date(day_text)
+    resolved_symbol = _resolve_symbol(config, symbol)
+    output_path = output or f"logs/{resolved_symbol}_{multiplier}minute_{requested_day.isoformat()}.csv"
+
+    adapter = PolygonAdapter(config)
+    rows = adapter.get_single_day_aggregate_rows(
+        symbol=resolved_symbol,
+        day=requested_day,
+        multiplier=multiplier,
+    )
+    export_polygon_aggregate_rows(rows, output_path)
+    print(f"Saved {len(rows)} rows to {output_path}")
+
+
+def _resolve_symbol(config: AppConfig, symbol: str) -> str:
+    if symbol:
+        return symbol.upper()
+    if config.app.symbols:
+        return config.app.symbols[0].upper()
+    raise SystemExit("A symbol is required for fetch-day when no symbols are configured.")
+
+
+def _parse_iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid date '{value}'. Expected YYYY-MM-DD.") from exc
 
 
 def _run_live_mode(config: AppConfig, logger: SQLiteLogger, poll_seconds: int) -> None:

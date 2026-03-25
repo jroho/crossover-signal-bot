@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import requests
 
@@ -22,24 +22,32 @@ class PolygonAdapter(MarketDataAdapter):
         end: datetime,
     ) -> list[Candle]:
         multiplier, timespan = self._polygon_timespan(timeframe)
-        url = (
-            f"{self.config.polygon.base_url}/v2/aggs/ticker/{symbol.upper()}/range/"
-            f"{multiplier}/{timespan}/{start.date()}/{end.date()}"
+        results = self._get_aggregate_results(
+            symbol=symbol,
+            multiplier=multiplier,
+            timespan=timespan,
+            start_date=start.date(),
+            end_date=end.date(),
         )
-        response = self.session.get(
-            url,
-            params={
-                "adjusted": "true",
-                "sort": "asc",
-                "limit": 50000,
-                "apiKey": self.config.polygon.api_key,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        results = payload.get("results", [])
         return [self._result_to_candle(symbol, timeframe, result) for result in results]
+
+    def get_single_day_aggregate_rows(
+        self,
+        symbol: str,
+        day: date,
+        multiplier: int,
+    ) -> list[dict[str, object]]:
+        if multiplier < 1:
+            raise ValueError("Multiplier must be greater than or equal to 1.")
+
+        results = self._get_aggregate_results(
+            symbol=symbol,
+            multiplier=multiplier,
+            timespan="minute",
+            start_date=day,
+            end_date=day,
+        )
+        return [self._result_to_aggregate_row(result) for result in results]
 
     def get_latest_closed_candles(
         self,
@@ -60,15 +68,54 @@ class PolygonAdapter(MarketDataAdapter):
             return 5, "minute"
         raise ValueError(f"Unsupported timeframe: {timeframe}")
 
+    def _get_aggregate_results(
+        self,
+        symbol: str,
+        multiplier: int,
+        timespan: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, object]]:
+        url = (
+            f"{self.config.polygon.base_url}/v2/aggs/ticker/{symbol.upper()}/range/"
+            f"{multiplier}/{timespan}/{start_date}/{end_date}"
+        )
+        response = self.session.get(
+            url,
+            params={
+                "adjusted": "true",
+                "sort": "asc",
+                "limit": 50000,
+                "apiKey": self.config.polygon.api_key,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("results", [])
+
     @staticmethod
-    def _result_to_candle(symbol: str, timeframe: Timeframe, payload: dict[str, float]) -> Candle:
+    def _result_to_candle(symbol: str, timeframe: Timeframe, payload: dict[str, object]) -> Candle:
         return Candle(
             symbol=symbol.upper(),
             timeframe=timeframe,
-            timestamp=datetime.fromtimestamp(payload["t"] / 1000, tz=UTC),
+            timestamp=datetime.fromtimestamp(float(payload["t"]) / 1000, tz=UTC),
             open=float(payload["o"]),
             high=float(payload["h"]),
             low=float(payload["l"]),
             close=float(payload["c"]),
             volume=float(payload["v"]),
         )
+
+    @staticmethod
+    def _result_to_aggregate_row(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "t": payload.get("t"),
+            "o": payload.get("o"),
+            "h": payload.get("h"),
+            "l": payload.get("l"),
+            "c": payload.get("c"),
+            "v": payload.get("v"),
+            "vw": payload.get("vw"),
+            "n": payload.get("n"),
+        }

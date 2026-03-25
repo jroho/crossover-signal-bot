@@ -11,6 +11,7 @@ Replay-first Python bot for intraday QQQ/SPY signal evaluation using VWAP, EMA 9
 - Exports review CSVs
 - Formats and optionally sends Telegram alerts
 - Includes a minimal Polygon historical/live polling adapter
+- Includes a pragmatic Polygon bootstrap command for one-day minute aggregate downloads
 
 ## Project layout
 ```text
@@ -76,6 +77,14 @@ Run replay and export reviewed rows:
 signal-bot replay --config config.toml --csv tests/fixtures/sample_intraday.csv --export logs/replay_export.csv
 ```
 
+Fetch a single day of Polygon aggregate data with a fixed `minute` timespan:
+
+```bash
+signal-bot --config config.toml fetch-day -date 2026-03-24 -multiplier 5 --symbol QQQ --output logs/QQQ_5minute_2026-03-24.csv
+```
+
+If `--symbol` is omitted, the command uses the first configured symbol.
+
 Run minimal live polling:
 
 ```bash
@@ -116,3 +125,4 @@ Tests cover:
 - grading and strike bias rules
 - alert formatting
 - replay determinism
+- Polygon bootstrap command behavior
