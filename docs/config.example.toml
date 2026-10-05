@@ -22,11 +22,23 @@ enable_one_min_confirmation = true
 require_one_min_confirmation = false
 
 [grading]
+# The lowest grade listed is the alert floor, so ["A", "B"] also alerts A+.
 alert_grades = ["A", "B"]
 allow_grade_c_soft_alerts = false
 allow_grade_b_itm = true
+# OTM bias is only ever recommended for A+ setups.
 allow_grade_a_otm = true
 allow_two_otm = false
+# A 5m SMA 15/30 cross older than this many 5m bars is "stale" and no longer triggers.
+fresh_cross_max_bars = 3
+# A+ requires the cross to be at most this many 5m bars old.
+a_plus_max_cross_bars = 1
+
+[outcomes]
+# Underlying move (percent) that counts as a realized pop win or loss, and the win-strength buckets.
+pop_threshold_pct = 0.17
+pop_grade_b_pct = 0.34
+pop_grade_a_pct = 0.51
 
 [storage]
 sqlite_path = "logs/signals.sqlite3"
@@ -43,10 +55,56 @@ enabled = false
 bot_token = ""
 chat_id = ""
 
+[data]
+# "alpaca" or "polygon". Leave empty to use whichever provider has credentials below.
+provider = "alpaca"
+
+[alpaca]
+enabled = true
+# Or set APCA_API_KEY_ID / APCA_API_SECRET_KEY in the environment.
+api_key_id = ""
+api_secret_key = ""
+paper = true
+# Backfills use the consolidated tape; the free plan withholds its latest 15 minutes.
+historical_feed = "sip"
+# The live window is served by the real-time IEX feed on the free plan.
+live_feed = "iex"
+adjustment = "split"
+
 [polygon]
 enabled = false
 base_url = "https://api.polygon.io"
 api_key = ""
+
+[trading]
+enabled = false
+paper = true
+# Sizing uses this, not the broker's equity, so a $100K paper account behaves like $500.
+risk_capital_usd = 500
+usd_per_contract = 1250
+bear_multiplier = 2
+max_contracts = 3
+max_position_cost_pct = 50
+max_open_positions = 2
+min_grade = "A"
+plain_a_max_lag_min = 5
+require_alignment = true
+# bull / bear / neutral, set before the open from the headlines; empty uses the data bias.
+daily_bias_override = ""
+last_entry_time = "13:00"
+flat_time = "15:35"
+max_hold_minutes = 45
+target_pct = 30
+stop_pct = 30
+entry_limit_buffer = 0.02
+entry_timeout_minutes = 3
+daily_loss_limit_usd = 150
+max_losses_per_day = 2
+drawdown_kill_usd = 200
+# "indicative" is free; "opra" needs the paid options data plan.
+option_feed = "indicative"
+journal_sqlite_path = "logs/live_trades.sqlite3"
+journal_csv_path = "logs/live_trades.csv"
 
 [live]
 lookback_minutes = 180

@@ -17,9 +17,13 @@ class Direction(str, Enum):
 
 
 class Grade(str, Enum):
+    A_PLUS = "A+"
     A = "A"
     B = "B"
     C = "C"
+
+
+GRADE_RANK: dict[Grade, int] = {Grade.C: 0, Grade.B: 1, Grade.A: 2, Grade.A_PLUS: 3}
 
 
 class OutcomeGrade(str, Enum):
@@ -112,6 +116,12 @@ class SetupEvaluation:
     grade: Grade
     strike_bias: StrikeBias
     strike_bias_reason: str
+    # 5m bars since the crossover was detected; None when no crossover has been observed this session.
+    sma_cross_age_bars: float | None = None
+    # Minutes between the 1m SMA 15/30 cross and the 5m cross in the same direction (positive = 1m led).
+    sma_cross_lag_min: float | None = None
+    # How many 1m candles of the active 5m bar had printed when this row was evaluated (1-5).
+    bar_minutes_elapsed: int | None = None
     passed_conditions: list[str] = field(default_factory=list)
     weak_conditions: list[str] = field(default_factory=list)
     failed_conditions: list[str] = field(default_factory=list)
@@ -143,6 +153,8 @@ class SetupEvaluation:
             "sma_cross_time": self.sma_cross_time.isoformat() if self.sma_cross_time else None,
             "sma15_slope": self.sma15_slope,
             "sma30_slope": self.sma30_slope,
+            "sma_cross_age_bars": self.sma_cross_age_bars,
+            "sma_cross_lag_min": self.sma_cross_lag_min,
             "rvgi": self.rvgi,
             "rvgi_sma": self.rvgi_sma,
             "rvgi_vs_sma": self.rvgi_vs_sma,
@@ -151,6 +163,7 @@ class SetupEvaluation:
             "recent_volume_avg": self.recent_volume_avg,
             "rolling_volume_avg": self.rolling_volume_avg,
             "volume_grade": self.volume_grade,
+            "bar_minutes_elapsed": self.bar_minutes_elapsed,
             "one_min_agreement": self.one_min_agreement,
             "grade": self.grade.value,
             "strike_bias": self.strike_bias.value,

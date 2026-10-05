@@ -39,6 +39,18 @@ class GradingConfig:
     allow_grade_b_itm: bool = True
     allow_grade_a_otm: bool = True
     allow_two_otm: bool = False
+    # A 5m crossover older than this many 5m bars no longer counts as a trigger.
+    fresh_cross_max_bars: int = 3
+    # A+ additionally requires the crossover to be at most this many 5m bars old.
+    a_plus_max_cross_bars: int = 1
+
+
+@dataclass(frozen=True)
+class OutcomeConfig:
+    # Underlying move (percent) that counts as a realized pop win or loss.
+    pop_threshold_pct: float = 0.17
+    pop_grade_b_pct: float = 0.34
+    pop_grade_a_pct: float = 0.51
 
 
 @dataclass(frozen=True)
@@ -70,6 +82,57 @@ class PolygonConfig:
 
 
 @dataclass(frozen=True)
+class AlpacaConfig:
+    enabled: bool = False
+    api_key_id: str = ""
+    api_secret_key: str = ""
+    # Paper vs live only matters for trading endpoints; market data is shared.
+    paper: bool = True
+    # Consolidated tape for backfills; the free plan withholds its most recent 15 minutes.
+    historical_feed: str = "sip"
+    # Real-time on the free plan, so it serves the window the historical feed cannot.
+    live_feed: str = "iex"
+    adjustment: str = "split"
+
+
+@dataclass(frozen=True)
+class DataConfig:
+    # "alpaca" or "polygon"; empty selects whichever provider has credentials configured.
+    provider: str = ""
+
+
+@dataclass(frozen=True)
+class TradingConfig:
+    enabled: bool = False
+    paper: bool = True
+    # Sizing is against this figure, not the broker's equity, so a $100K paper account behaves like $500.
+    risk_capital_usd: float = 500.0
+    usd_per_contract: float = 1250.0
+    bear_multiplier: int = 2
+    max_contracts: int = 3
+    max_position_cost_pct: float = 50.0
+    max_open_positions: int = 2
+    min_grade: str = "A"
+    plain_a_max_lag_min: float | None = 5.0
+    require_alignment: bool = True
+    # bull / bear / neutral set before the open from headlines; empty uses the data bias.
+    daily_bias_override: str = ""
+    last_entry_time: str = "13:00"
+    flat_time: str = "15:35"
+    max_hold_minutes: int = 45
+    target_pct: float = 30.0
+    stop_pct: float = 30.0
+    entry_limit_buffer: float = 0.02
+    entry_timeout_minutes: int = 3
+    daily_loss_limit_usd: float = 150.0
+    max_losses_per_day: int = 2
+    drawdown_kill_usd: float = 200.0
+    option_feed: str = "indicative"
+    journal_sqlite_path: str = "logs/live_trades.sqlite3"
+    journal_csv_path: str = "logs/live_trades.csv"
+
+
+@dataclass(frozen=True)
 class LiveConfig:
     lookback_minutes: int = 180
     poll_seconds: int = 60
@@ -90,10 +153,14 @@ class AppConfig:
     volume: VolumeConfig = field(default_factory=VolumeConfig)
     confirmation: ConfirmationConfig = field(default_factory=ConfirmationConfig)
     grading: GradingConfig = field(default_factory=GradingConfig)
+    outcomes: OutcomeConfig = field(default_factory=OutcomeConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     replay: ReplayConfig = field(default_factory=ReplayConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     polygon: PolygonConfig = field(default_factory=PolygonConfig)
+    alpaca: AlpacaConfig = field(default_factory=AlpacaConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    trading: TradingConfig = field(default_factory=TradingConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
 
     def as_dict(self) -> dict[str, Any]:
@@ -113,11 +180,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
 
     telegram = {**raw.get("telegram", {})}
     polygon = {**raw.get("polygon", {})}
+    alpaca = {**raw.get("alpaca", {})}
     live = {**raw.get("live", {})}
 
     telegram["bot_token"] = os.getenv("TELEGRAM_BOT_TOKEN", telegram.get("bot_token", ""))
     telegram["chat_id"] = os.getenv("TELEGRAM_CHAT_ID", telegram.get("chat_id", ""))
     polygon["api_key"] = os.getenv("POLYGON_API_KEY", polygon.get("api_key", ""))
+    alpaca["api_key_id"] = os.getenv("APCA_API_KEY_ID", alpaca.get("api_key_id", ""))
+    alpaca["api_secret_key"] = os.getenv("APCA_API_SECRET_KEY", alpaca.get("api_secret_key", ""))
 
     # Keep loading older config files gracefully even though alert gating is now always market-hours-only.
     live.pop("market_hours_only", None)
@@ -128,9 +198,13 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         volume=_build_dataclass(VolumeConfig, raw.get("volume")),
         confirmation=_build_dataclass(ConfirmationConfig, raw.get("confirmation")),
         grading=_build_dataclass(GradingConfig, raw.get("grading")),
+        outcomes=_build_dataclass(OutcomeConfig, raw.get("outcomes")),
         storage=_build_dataclass(StorageConfig, raw.get("storage")),
         replay=_build_dataclass(ReplayConfig, raw.get("replay")),
         telegram=_build_dataclass(TelegramConfig, telegram),
         polygon=_build_dataclass(PolygonConfig, polygon),
+        alpaca=_build_dataclass(AlpacaConfig, alpaca),
+        data=_build_dataclass(DataConfig, raw.get("data")),
+        trading=_build_dataclass(TradingConfig, raw.get("trading")),
         live=_build_dataclass(LiveConfig, live),
     )

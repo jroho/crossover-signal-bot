@@ -49,10 +49,11 @@ def export_replay_candle_rows(rows: list[dict[str, object]], path: str | Path) -
     _write_rows(rows, path, fieldnames=REPLAY_CANDLE_FIELDNAMES)
 
 
-def polygon_aggregate_rows_to_replay_rows(
+def aggregate_rows_to_replay_rows(
     rows: list[dict[str, object]],
     symbol: str,
 ) -> list[dict[str, object]]:
+    """Convert provider aggregate rows (t in epoch ms, o/h/l/c/v) into replay CSV rows."""
     replay_rows: list[dict[str, object]] = []
     normalized_symbol = symbol.upper()
     for row in rows:
@@ -68,6 +69,10 @@ def polygon_aggregate_rows_to_replay_rows(
             }
         )
     return replay_rows
+
+
+# Kept for callers that still use the provider-specific name.
+polygon_aggregate_rows_to_replay_rows = aggregate_rows_to_replay_rows
 
 
 def _with_market_time_columns(row: dict[str, object], market_timezone: str | None) -> dict[str, object]:

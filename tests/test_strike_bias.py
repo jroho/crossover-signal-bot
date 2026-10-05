@@ -3,13 +3,13 @@ from src.grading import recommend_strike_bias
 from src.models import Grade, StrikeBias, VolumeGrade
 
 
-def _config(allow_two_otm: bool = False, soft_c: bool = False) -> AppConfig:
+def _config(allow_two_otm: bool = False, soft_c: bool = False, allow_a_otm: bool = True) -> AppConfig:
     return AppConfig(
         app=AppSection(),
         indicators=IndicatorConfig(),
         volume=VolumeConfig(),
         confirmation=ConfirmationConfig(),
-        grading=GradingConfig(alert_grades=["A", "B"], allow_grade_c_soft_alerts=soft_c, allow_grade_b_itm=True, allow_grade_a_otm=True, allow_two_otm=allow_two_otm),
+        grading=GradingConfig(alert_grades=["A", "B"], allow_grade_c_soft_alerts=soft_c, allow_grade_b_itm=True, allow_grade_a_otm=allow_a_otm, allow_two_otm=allow_two_otm),
         storage=StorageConfig(),
         replay=ReplayConfig(),
         telegram=TelegramConfig(),
@@ -18,7 +18,7 @@ def _config(allow_two_otm: bool = False, soft_c: bool = False) -> AppConfig:
     )
 
 
-def test_grade_a_defaults_to_one_otm_only_when_expansion_is_strong():
+def test_grade_a_stays_atm_even_with_strong_expansion():
     bias, reason = recommend_strike_bias(
         Grade.A,
         _config(),
@@ -28,8 +28,35 @@ def test_grade_a_defaults_to_one_otm_only_when_expansion_is_strong():
         one_min_agreement="yes",
     )
 
+    assert bias == StrikeBias.ATM
+    assert "A+" in reason
+
+
+def test_grade_a_plus_gets_one_otm():
+    bias, reason = recommend_strike_bias(
+        Grade.A_PLUS,
+        _config(),
+        structure_aligned=True,
+        momentum_aligned=True,
+        volume_grade=VolumeGrade.STRONG,
+        one_min_agreement="yes",
+    )
+
     assert bias == StrikeBias.ONE_OTM
     assert "expansion" in reason.lower()
+
+
+def test_grade_a_plus_stays_atm_when_otm_is_disabled():
+    bias, _ = recommend_strike_bias(
+        Grade.A_PLUS,
+        _config(allow_a_otm=False),
+        structure_aligned=True,
+        momentum_aligned=True,
+        volume_grade=VolumeGrade.STRONG,
+        one_min_agreement="yes",
+    )
+
+    assert bias == StrikeBias.ATM
 
 
 def test_grade_b_can_fall_back_to_itm():
@@ -58,9 +85,9 @@ def test_grade_c_prefers_skip_without_soft_alerts():
     assert bias == StrikeBias.SKIP
 
 
-def test_grade_a_can_use_two_otm_only_when_enabled():
+def test_grade_a_plus_can_use_two_otm_only_when_enabled():
     bias, _ = recommend_strike_bias(
-        Grade.A,
+        Grade.A_PLUS,
         _config(allow_two_otm=True),
         structure_aligned=True,
         momentum_aligned=True,

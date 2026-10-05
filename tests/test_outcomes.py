@@ -124,9 +124,9 @@ def test_pop_outcome_stays_blank_when_30m_window_is_missing():
 @pytest.mark.parametrize(
     ("returns", "expected_grade"),
     [
-        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0019, "forward_return_15m": 0.0020, "forward_return_30m": 0.0021}, OutcomeGrade.C),
-        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0035, "forward_return_15m": 0.0032, "forward_return_30m": 0.0031}, OutcomeGrade.B),
-        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0052, "forward_return_15m": 0.0045, "forward_return_30m": 0.0049}, OutcomeGrade.A),
+        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0019, "forward_return_10m": 0.0019, "forward_return_15m": 0.0020, "forward_return_30m": 0.0021}, OutcomeGrade.C),
+        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0035, "forward_return_10m": 0.0030, "forward_return_15m": 0.0032, "forward_return_30m": 0.0031}, OutcomeGrade.B),
+        ({"forward_return_3m": 0.0018, "forward_return_5m": 0.0052, "forward_return_10m": 0.0040, "forward_return_15m": 0.0045, "forward_return_30m": 0.0049}, OutcomeGrade.A),
     ],
 )
 def test_pop_grade_buckets_win_strength(returns: dict[str, float], expected_grade: OutcomeGrade):

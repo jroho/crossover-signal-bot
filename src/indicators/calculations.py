@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -17,6 +18,55 @@ class IndicatorBundle:
     candles: list[Candle]
     states: dict[IndicatorKey, IndicatorState]
     dataframe: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class PartialBarVolume:
+    elapsed_minutes: int
+    current_volume: float
+    recent_volume_avg: float | None
+    rolling_volume_avg: float | None
+    volume_grade: VolumeGrade
+
+
+def five_minute_bucket_start(timestamp: datetime) -> datetime:
+    return timestamp.replace(minute=timestamp.minute - timestamp.minute % 5, second=0, microsecond=0)
+
+
+def partial_bar_volume_context(one_minute_candles: list[Candle], config: AppConfig) -> PartialBarVolume | None:
+    """Grade the still-printing 5m bar's volume against prior bars truncated to the same elapsed minute.
+
+    Comparing a bar that is two minutes old against full five-minute bars made the volume grade track the
+    clock rather than participation, so prior bars are measured through the same minute offset.
+    """
+    if not one_minute_candles:
+        return None
+
+    buckets: dict[datetime, list[float]] = {}
+    for candle in one_minute_candles:
+        buckets.setdefault(five_minute_bucket_start(candle.timestamp), []).append(float(candle.volume))
+    ordered = [buckets[key] for key in sorted(buckets)]
+    current = ordered[-1]
+    elapsed = len(current)
+    prior = ordered[:-1]
+
+    prior_volumes = [sum(volumes[:elapsed]) for volumes in prior[-config.volume.prior_window :]]
+    recent_avg = sum(prior_volumes) / len(prior_volumes) if len(prior_volumes) >= config.volume.prior_window else None
+
+    rolling_avg: float | None = None
+    if config.volume.use_rolling_average and config.volume.rolling_window > 0:
+        window = prior[-config.volume.rolling_window :]
+        if len(window) >= config.volume.rolling_window:
+            rolling_avg = sum(sum(volumes[:elapsed]) for volumes in window) / len(window)
+
+    current_volume = sum(current)
+    return PartialBarVolume(
+        elapsed_minutes=elapsed,
+        current_volume=current_volume,
+        recent_volume_avg=recent_avg,
+        rolling_volume_avg=rolling_avg,
+        volume_grade=classify_volume(current_volume, prior_volumes, rolling_avg, config),
+    )
 
 
 def candles_to_dataframe(candles: list[Candle]) -> pd.DataFrame:
@@ -212,7 +262,7 @@ def _compute_symbol_indicators(frame: pd.DataFrame, config: AppConfig) -> pd.Dat
         current_volume = float(frame["volume"].iloc[index])
         rolling_avg = _nullable_float(frame["rolling_volume_avg"].iloc[index])
         volume_grades.append(
-            _classify_volume(
+            classify_volume(
                 current_volume=current_volume,
                 prior_volumes=prior_window,
                 rolling_avg=rolling_avg,
@@ -224,7 +274,7 @@ def _compute_symbol_indicators(frame: pd.DataFrame, config: AppConfig) -> pd.Dat
     return frame
 
 
-def _classify_volume(
+def classify_volume(
     current_volume: float,
     prior_volumes: list[float],
     rolling_avg: float | None,

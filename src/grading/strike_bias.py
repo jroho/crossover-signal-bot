@@ -20,12 +20,16 @@ def recommend_strike_bias(
         and one_min_agreement in {"yes", "disabled"}
     )
 
-    if grade == Grade.A:
+    # OTM is reserved for A+; a plain A stays ATM no matter how strong the expansion looks.
+    if grade == Grade.A_PLUS:
         if config.grading.allow_two_otm and strong_expansion:
-            return StrikeBias.TWO_OTM, "Exceptional expansion setup with strong structure, momentum, and volume."
-        if config.grading.allow_grade_a_otm and strong_expansion:
-            return StrikeBias.ONE_OTM, "Strong Grade A expansion setup supports a modest OTM bias."
-        return StrikeBias.ATM, "Grade A setup is valid, but ATM stays the default advisory."
+            return StrikeBias.TWO_OTM, "Exceptional A+ expansion setup with strong structure, momentum, and volume."
+        if config.grading.allow_grade_a_otm:
+            return StrikeBias.ONE_OTM, "A+ expansion setup supports a modest OTM bias."
+        return StrikeBias.ATM, "A+ setup keeps ATM because OTM bias is disabled."
+
+    if grade == Grade.A:
+        return StrikeBias.ATM, "Grade A setup is valid; ATM is the default and OTM is reserved for A+."
 
     if grade == Grade.B:
         if config.grading.allow_grade_b_itm and (not momentum_aligned or one_min_agreement == "no"):

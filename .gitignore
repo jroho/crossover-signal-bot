@@ -94,3 +94,10 @@ logs/*.log
 # Local exports and temporary data
 *.tmp
 *.bak
+
+# Pulled market history (large)
+data/
+
+# Backtest sweep outputs and pull logs
+logs/sim/
+logs/*.log

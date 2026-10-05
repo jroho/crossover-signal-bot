@@ -8,7 +8,8 @@ from src.market_hours import is_within_market_hours, parse_clock_time
 from src.models import Direction, Grade, IndicatorState, OneMinuteConfirmation, SetupEvaluation, StrikeBias, VolumeGrade
 
 
-ACTIVE_CROSS_STATUSES = {"fresh", "active", "derived"}
+# Only an observed crossover inside the freshness window is a trigger; "stale" and "derived" regimes are not.
+TRIGGER_CROSS_STATUSES = {"fresh", "active"}
 
 
 def grade_setup(
@@ -40,7 +41,7 @@ def grade_setup(
     cross_in_market_hours = _cross_is_during_market_hours(evaluation, config)
     trigger_aligned = (
         evaluation.sma_cross_signal == evaluation.direction.value
-        and evaluation.sma_cross_status in ACTIVE_CROSS_STATUSES
+        and evaluation.sma_cross_status in TRIGGER_CROSS_STATUSES
         and cross_in_market_hours
     )
     slopes_supportive = _cross_slopes_supportive(evaluation, is_bull)
@@ -104,6 +105,16 @@ def grade_setup(
     if evaluation.grade == Grade.A and not slopes_supportive:
         evaluation.grade = Grade.B
 
+    if evaluation.grade == Grade.A and _qualifies_for_a_plus(
+        evaluation=evaluation,
+        volume_grade=indicator_state.volume_grade,
+        slopes_constructive=slopes_constructive,
+        one_min_status=one_min_confirmation.status,
+        config=config,
+    ):
+        evaluation.grade = Grade.A_PLUS
+        evaluation.passed_conditions.append("A+: fresh cross, strong volume, momentum expanding, 1m agrees")
+
     evaluation.strike_bias, evaluation.strike_bias_reason = recommend_strike_bias(
         evaluation.grade,
         config,
@@ -128,15 +139,39 @@ def grade_setup(
     return evaluation
 
 
-def _cross_is_during_market_hours(evaluation: SetupEvaluation, config: AppConfig) -> bool:
-    if evaluation.sma_cross_signal == "none":
+def _qualifies_for_a_plus(
+    *,
+    evaluation: SetupEvaluation,
+    volume_grade: VolumeGrade,
+    slopes_constructive: bool,
+    one_min_status: str,
+    config: AppConfig,
+) -> bool:
+    """A+ is the only grade that earns an OTM bias, so it demands everything at once: a cross no older than
+    the configured bar count, strong volume, RVGI expanding with the trade, and 1m agreement when enabled."""
+    if evaluation.sma_cross_age_bars is None or evaluation.sma_cross_age_bars > config.grading.a_plus_max_cross_bars:
         return False
-    if evaluation.sma_cross_time is None:
-        return True
+    if volume_grade != VolumeGrade.STRONG:
+        return False
+    if not slopes_constructive:
+        return False
+    return one_min_status in {"yes", "disabled"}
+
+
+def _cross_is_during_market_hours(evaluation: SetupEvaluation, config: AppConfig) -> bool:
+    if evaluation.sma_cross_signal == "none" or evaluation.sma_cross_time is None:
+        return False
     market_timezone = ZoneInfo(config.app.market_timezone)
     market_open = parse_clock_time(config.live.market_open_time, field_name="live.market_open_time")
     market_close = parse_clock_time(config.live.market_close_time, field_name="live.market_close_time")
     return is_within_market_hours(evaluation.sma_cross_time, market_timezone, market_open, market_close)
+
+
+def _format_age(age_bars: float | None) -> str:
+    if age_bars is None:
+        return "an unknown number of bars"
+    bars = int(age_bars)
+    return f"{bars} bar" if bars == 1 else f"{bars} bars"
 
 
 def _cross_slopes_supportive(evaluation: SetupEvaluation, is_bull: bool) -> bool:
@@ -179,14 +214,16 @@ def _fill_condition_lists(
     if trigger_aligned:
         if evaluation.sma_cross_status == "fresh":
             evaluation.passed_conditions.append("5m SMA 15/30 cross triggered within this candle")
-        elif evaluation.sma_cross_status == "active":
-            evaluation.passed_conditions.append("5m SMA 15/30 crossover regime is still active")
         else:
-            evaluation.passed_conditions.append("5m SMA 15/30 crossover regime is aligned from available 5m history")
+            evaluation.passed_conditions.append(f"5m SMA 15/30 cross is {_format_age(evaluation.sma_cross_age_bars)} old (fresh window)")
     elif evaluation.sma_cross_status == "warmup":
         evaluation.weak_conditions.append("5m SMA 15/30 trigger is still warming up")
     elif evaluation.sma_cross_signal == "none":
         evaluation.weak_conditions.append("5m SMA 15/30 crossover regime is not established yet")
+    elif evaluation.sma_cross_status == "derived":
+        evaluation.failed_conditions.append("no 5m SMA 15/30 crossover observed this session (regime inferred from levels only)")
+    elif evaluation.sma_cross_status == "stale" and evaluation.sma_cross_signal == evaluation.direction.value:
+        evaluation.failed_conditions.append(f"5m SMA 15/30 cross is stale ({_format_age(evaluation.sma_cross_age_bars)} old)")
     elif not cross_in_market_hours:
         evaluation.failed_conditions.append("5m SMA 15/30 crossover happened outside market hours")
     else:
@@ -271,9 +308,18 @@ def _build_rationale(
     if not trigger_aligned:
         if cross_status == "warmup":
             return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 trigger is still warming up."
+        if cross_status == "derived":
+            return f"{direction.capitalize()} setup is capped at Grade C because no 5m 15/30 crossover has been observed this session ({cross_detail})."
+        if cross_status == "stale":
+            return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 crossover is stale ({cross_detail})."
         if not cross_in_market_hours:
             return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 crossover happened outside market hours ({cross_detail})."
         return f"{direction.capitalize()} setup is capped at Grade C because the 5m 15/30 crossover regime does not support this direction ({cross_detail})."
+    if grade == Grade.A_PLUS:
+        return (
+            f"{direction.capitalize()} A+ setup: fresh 5m 15/30 crossover ({cross_detail}), clean structure, "
+            f"momentum confirming and expanding, strong volume, and 1m confirmation is {one_min_status}."
+        )
     if grade == Grade.A:
         return (
             f"{direction.capitalize()} 5m structure is clean, the 5m 15/30 crossover regime is aligned ({cross_detail}), "

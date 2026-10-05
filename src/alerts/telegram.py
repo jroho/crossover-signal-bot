@@ -18,6 +18,8 @@ def format_alert(evaluation: SetupEvaluation) -> AlertPayload:
             f"VWAP: {evaluation.vwap_relation}",
             f"EMA 9: {evaluation.ema9_relation}",
             f"15/30 Cross: {cross_detail}",
+            f"Cross age: {_format_bars(evaluation.sma_cross_age_bars)}",
+            f"1m->5m lag: {_format_lag(evaluation.sma_cross_lag_min)}",
             f"15/30 Trend: {evaluation.sma_trend_relation}",
             f"15 SMA slope: {evaluation.sma15_slope if evaluation.sma15_slope is not None else 'unknown'}",
             f"30 SMA slope: {evaluation.sma30_slope if evaluation.sma30_slope is not None else 'unknown'}",
@@ -41,6 +43,18 @@ def format_alert(evaluation: SetupEvaluation) -> AlertPayload:
         title=f"{evaluation.symbol} {evaluation.timeframe.value} {evaluation.direction.value.upper()} ALERT",
         message=message,
     )
+
+
+def _format_bars(age_bars: float | None) -> str:
+    if age_bars is None:
+        return "unknown"
+    return f"{age_bars:.0f} bars"
+
+
+def _format_lag(lag_minutes: float | None) -> str:
+    if lag_minutes is None:
+        return "n/a"
+    return f"{lag_minutes:+.1f} min"
 
 
 class TelegramAlerter:

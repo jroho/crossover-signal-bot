@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from src.config.settings import AppConfig, AppSection, ConfirmationConfig, GradingConfig, IndicatorConfig, LiveConfig, PolygonConfig, ReplayConfig, StorageConfig, TelegramConfig, VolumeConfig
 from src.data import CsvReplayAdapter
-from src.indicators import build_indicator_bundle, resample_to_active_five_minute, resample_to_five_minute
-from src.models import Candle, Timeframe
+from src.indicators import build_indicator_bundle, partial_bar_volume_context, resample_to_active_five_minute, resample_to_five_minute
+from src.models import Candle, Timeframe, VolumeGrade
 from src.signals import evaluate_symbol
 
 
@@ -86,6 +86,53 @@ def test_resample_to_active_five_minute_updates_last_snapshot_every_minute():
     assert active_five_minute[1].open == 105.0
     assert active_five_minute[1].close == 105.0
     assert active_five_minute[1].volume == 15.0
+
+
+def _minute_candles(start: datetime, per_minute_volumes: list[float]) -> list[Candle]:
+    return [
+        Candle("QQQ", Timeframe.ONE_MINUTE, start + timedelta(minutes=index), 100.0, 100.5, 99.5, 100.2, volume)
+        for index, volume in enumerate(per_minute_volumes)
+    ]
+
+
+def test_partial_bar_volume_compares_against_prior_bars_through_the_same_minute(base_config):
+    start = datetime(2026, 3, 24, 13, 30, tzinfo=UTC)
+    # Ten full prior bars at 100 shares per minute, then one minute of the new bar at 150 shares.
+    candles = _minute_candles(start, [100.0] * 50 + [150.0])
+
+    context = partial_bar_volume_context(candles, base_config)
+
+    assert context is not None
+    assert context.elapsed_minutes == 1
+    assert context.current_volume == 150.0
+    assert context.recent_volume_avg == 100.0
+    assert context.rolling_volume_avg == 100.0
+    # Against full 500-share bars this minute would read "weak"; like for like it is strong.
+    assert context.volume_grade == VolumeGrade.STRONG
+
+
+def test_partial_bar_volume_matches_full_bar_comparison_once_the_bar_closes(base_config):
+    start = datetime(2026, 3, 24, 13, 30, tzinfo=UTC)
+    candles = _minute_candles(start, [100.0] * 50 + [80.0] * 5)
+
+    context = partial_bar_volume_context(candles, base_config)
+
+    assert context is not None
+    assert context.elapsed_minutes == 5
+    assert context.current_volume == 400.0
+    assert context.recent_volume_avg == 500.0
+    assert context.volume_grade == VolumeGrade.WEAK
+
+
+def test_partial_bar_volume_is_insufficient_without_enough_prior_bars(base_config):
+    start = datetime(2026, 3, 24, 13, 30, tzinfo=UTC)
+    candles = _minute_candles(start, [100.0] * 10 + [150.0])
+
+    context = partial_bar_volume_context(candles, base_config)
+
+    assert context is not None
+    assert context.recent_volume_avg is None
+    assert context.volume_grade == VolumeGrade.INSUFFICIENT
 
 
 def test_evaluate_symbol_detects_intrabar_five_min_cross_on_minute_updates():

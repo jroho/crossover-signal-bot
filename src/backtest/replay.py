@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from src.alerts import TelegramAlerter, format_alert
+from src.alerts import AlertDeduper, TelegramAlerter, format_alert
 from src.config import AppConfig
 from src.data import CsvReplayAdapter
+from src.grading import grade_is_alertable
 from src.market_hours import is_within_market_hours, parse_clock_time
 from src.models import AlertRecord, ReplayResult, SetupEvaluation
 from src.signals import evaluate_symbol
@@ -39,25 +40,30 @@ class ReplayEngine:
         evaluations, _, _ = evaluate_symbol(candles, self.config)
 
         alerts: list[AlertRecord] = []
+        deduper = AlertDeduper()
         for evaluation in evaluations:
-            should_alert = evaluation.grade.value in set(self.config.grading.alert_grades)
             if not self._should_emit_alert(evaluation):
                 continue
-            if should_alert and (evaluation.strike_bias.value != "skip" or self.config.grading.allow_grade_c_soft_alerts):
-                payload = format_alert(evaluation)
-                delivered = False
-                transport_message = "replay send disabled"
-                if self.config.replay.send_telegram:
-                    delivered, transport_message = self.alerter.send(payload)
-                evaluation.alert_sent = delivered or self.config.replay.send_telegram
-                alerts.append(
-                    AlertRecord(
-                        evaluation=evaluation,
-                        payload=payload,
-                        delivered=delivered,
-                        transport_message=transport_message,
-                    )
+            if not grade_is_alertable(evaluation.grade, self.config.grading.alert_grades):
+                continue
+            if evaluation.strike_bias.value == "skip" and not self.config.grading.allow_grade_c_soft_alerts:
+                continue
+            if not deduper.should_alert(evaluation):
+                continue
+            payload = format_alert(evaluation)
+            delivered = False
+            transport_message = "replay send disabled"
+            if self.config.replay.send_telegram:
+                delivered, transport_message = self.alerter.send(payload)
+            evaluation.alert_sent = delivered
+            alerts.append(
+                AlertRecord(
+                    evaluation=evaluation,
+                    payload=payload,
+                    delivered=delivered,
+                    transport_message=transport_message,
                 )
+            )
 
         self.logger.initialize()
         run_id = self.logger.create_run(mode="replay", config=self.config, source=str(source_path))

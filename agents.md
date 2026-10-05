@@ -44,13 +44,13 @@ The system should:
 - No unnecessary indicators beyond the defined stack
 
 ## Core Design Decisions
-- Primary market data provider: Polygon
+- Primary market data provider: Alpaca (free real-time IEX bars for live, consolidated SIP bars for history); Polygon is an optional history-only alternative because its affordable tiers are 15-minute delayed
 - Primary alert transport: Telegram Bot API
 - Primary local storage: SQLite
 - Secondary export format: CSV
 - Initial development priority: replay/backtesting mode first
 - Live mode should reuse the same signal and grading logic as replay mode
-- Alpaca may be added later for paper trading or live execution, but is explicitly out of scope for v1
+- Alpaca is the market data provider in v1; Alpaca paper trading and live execution are the planned v2 path, after the grading fixes and backtest
 
 ## Supported Symbols
 Default watchlist:
@@ -107,17 +107,20 @@ Suggested structure:
 - AGENTS.md
 
 ## Market Data Requirements
-Use Polygon as the primary source for:
-- historical minute candles
-- live minute candles or trade aggregation
+Use Alpaca as the primary source for:
+- historical minute candles (consolidated SIP feed)
+- live minute candles (real-time IEX feed on the free plan)
 - symbol metadata as needed
 
-The code should abstract market data behind an adapter interface so the signal engine is not tightly coupled to Polygon implementation details.
+Polygon stays supported as a history-only alternative.
+
+The code should abstract market data behind an adapter interface so the signal engine is not tightly coupled to any provider's implementation details.
 
 ## Alert Requirements
 Use Telegram Bot API for alert delivery.
 
 Alerts should be concise, structured, and readable on mobile.
+Emit one alert per crossover episode per direction; alert again only when the grade upgrades, never on a downgrade or on every 1m re-evaluation.
 Each alert must include:
 - symbol
 - timestamp
@@ -212,6 +215,7 @@ Use recent-candle context, not full-session visual guessing.
 
 Required implementation:
 - compare trigger candle volume to prior 5 candles
+- while the 5m candle is still printing, compare its volume so far against the prior candles' volume through the same elapsed minute, never against full five-minute bars
 
 Optional implementation:
 - compare trigger candle volume to rolling 10-candle average
@@ -258,8 +262,23 @@ Bearish A:
 
 Strike bias for Grade A:
 - default: ATM
-- allowed: +/-1 OTM
+- OTM is reserved for Grade A+
+
+### Grade A+
+Use Grade A+ only when every Grade A condition holds and, in addition:
+- the 5m SMA 15 / SMA 30 cross is at most `a_plus_max_cross_bars` old (default 1 bar)
+- trigger volume is strong
+- RVGI and RVGI SMA are both expanding in the trade direction
+- 1m agreement is present when 1m confirmation is enabled
+
+Strike bias for Grade A+:
+- default: +/-1 OTM when `allow_grade_a_otm` is enabled, otherwise ATM
 - +/-2 OTM only in rare expansion cases if enabled by config
+
+### Trigger freshness
+- A cross counts as a trigger only while it is at most `fresh_cross_max_bars` old (default 3 bars); beyond that it is `stale` and the setup is Grade C
+- A regime inferred from SMA levels without an observed cross this session (`derived`) never triggers
+- Cross state resets at the start of each session
 
 ### Grade B
 Use Grade B when the setup is constructive but not fully confirmed.
@@ -371,7 +390,7 @@ Do not begin with full options PnL simulation.
 
 ## Live Mode Requirements
 Live mode should:
-- ingest Polygon live or near-live candle data
+- ingest Alpaca live or near-live candle data
 - evaluate signals on candle close by default
 - send Telegram alerts
 - reuse the same grading and signal engine used in replay mode
@@ -400,7 +419,7 @@ Use fixture-based tests with sample candle data.
 1. project scaffold
 2. configuration model
 3. candle and signal data models
-4. Polygon market data adapter interface
+4. market data adapter interface (Alpaca primary, Polygon optional)
 5. indicator calculation module
 6. grading engine
 7. strike bias recommendation logic

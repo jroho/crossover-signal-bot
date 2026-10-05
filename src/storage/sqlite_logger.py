@@ -70,7 +70,10 @@ class SQLiteLogger:
                     forward_return_30m REAL,
                     pop_outcome TEXT,
                     pop_outcome_horizon TEXT,
-                    pop_grade TEXT
+                    pop_grade TEXT,
+                    sma_cross_age_bars REAL,
+                    sma_cross_lag_min REAL,
+                    bar_minutes_elapsed INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS alerts (
@@ -101,6 +104,9 @@ class SQLiteLogger:
                     "pop_outcome": "TEXT",
                     "pop_outcome_horizon": "TEXT",
                     "pop_grade": "TEXT",
+                    "sma_cross_age_bars": "REAL",
+                    "sma_cross_lag_min": "REAL",
+                    "bar_minutes_elapsed": "INTEGER",
                 },
             )
 
@@ -161,6 +167,9 @@ class SQLiteLogger:
                     record["pop_outcome"],
                     record["pop_outcome_horizon"],
                     record["pop_grade"],
+                    record["sma_cross_age_bars"],
+                    record["sma_cross_lag_min"],
+                    record["bar_minutes_elapsed"],
                 )
             )
         with sqlite3.connect(self.path) as connection:
@@ -175,8 +184,9 @@ class SQLiteLogger:
                     strike_bias_reason, passed_conditions, weak_conditions, failed_conditions,
                     rationale, alert_sent, forward_return_3m, forward_return_5m,
                     forward_return_10m, forward_return_15m, forward_return_30m,
-                    pop_outcome, pop_outcome_horizon, pop_grade
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pop_outcome, pop_outcome_horizon, pop_grade,
+                    sma_cross_age_bars, sma_cross_lag_min, bar_minutes_elapsed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

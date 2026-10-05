@@ -9,6 +9,7 @@ description = "Replay-first intraday indicator alert bot for QQQ/SPY."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "alpaca-py>=0.44",
   "numpy>=1.26",
   "pandas>=2.1",
   "requests>=2.31",
