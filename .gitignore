@@ -101,3 +101,5 @@ data/
 # Backtest sweep outputs and pull logs
 logs/sim/
 logs/*.log
+logs/*.err
+logs/trade.pid

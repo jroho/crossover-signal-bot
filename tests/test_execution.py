@@ -71,8 +71,18 @@ class FakeBroker:
     fail_contract_lookup: bool = False
     _counter: int = 0
 
+    equity: float = 100000.0
+
     def account_equity(self) -> float:
-        return 100000.0
+        return self.equity
+
+    def buying_power(self) -> float:
+        return self.equity
+
+    def account_snapshot(self):
+        from src.execution.broker import AccountSnapshot
+
+        return AccountSnapshot("ACTIVE", self.equity, self.equity, 3, 1, "ACTIVE")
 
     def is_market_open(self) -> bool:
         return self.market_open
@@ -303,6 +313,17 @@ def test_drawdown_kill_switch_survives_new_session(tmp_path: Path):
     assert engine.halt_reason and engine.halt_reason.startswith("drawdown")
     engine.new_session(NOW + timedelta(days=1))
     assert engine.halt_reason is not None
+
+
+def test_entry_is_skipped_when_buying_power_cannot_cover_the_premium(tmp_path: Path):
+    broker = FakeBroker(equity=150.0)
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)  # $182 needed
+    engine = _engine(tmp_path, broker)
+
+    engine.on_evaluations([_evaluation()], NOW)
+
+    assert engine.open_trades == {} and engine.halt_reason is None
+    assert broker.orders == {}
 
 
 def test_broker_error_during_entry_halts_instead_of_crashing(tmp_path: Path):

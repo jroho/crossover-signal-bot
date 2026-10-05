@@ -163,6 +163,10 @@ Trade mode runs the same signal loop as `live`, then hands each new alertable ev
 
 Real money needs `[trading] paper = false` **and** `--live`.
 
+Live and trade modes evaluate the whole session from `[live] session_start_time` (default 04:00 ET) on every poll, not a sliding window: crossovers and the SMA-30 warm-up need the full day. On Alpaca the bars come from the consolidated feed up to 15 minutes ago and from IEX after that, with IEX volume scaled by the ratio measured where the two overlap. Trade mode also runs an account preflight at startup (paper/live keys must match the mode, account active, options level 2+) and checks buying power before each entry.
+
+Daily routine from a Claude Code window in this repo: `/paper-trade` (or `/dry-run`) around 9:25 ET, optionally with `bull`, `bear` or `neutral` to override the data bias; `/trade-status` during the day; `/trade-stop` after 15:35 ET. These wrap `scripts/trade_start.ps1`, `trade_status.ps1` and `trade_stop.ps1`, which start the loop detached from the window.
+
 Run minimal live polling:
 
 ```bash

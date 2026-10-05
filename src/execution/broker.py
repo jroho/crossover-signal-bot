@@ -56,8 +56,20 @@ class Position:
     avg_entry_price: float
 
 
+@dataclass(frozen=True)
+class AccountSnapshot:
+    status: str
+    equity: float
+    buying_power: float
+    options_level: int | None
+    multiplier: int | None
+    crypto_status: str | None
+
+
 class Broker(Protocol):
     def account_equity(self) -> float: ...
+    def buying_power(self) -> float: ...
+    def account_snapshot(self) -> AccountSnapshot: ...
     def is_market_open(self) -> bool: ...
     def find_contract(self, underlying: str, expiration: date, option_type: str, strike: float) -> Contract | None: ...
     def latest_quote(self, occ_symbol: str) -> Quote | None: ...
@@ -101,6 +113,24 @@ class AlpacaBroker:
 
     def account_equity(self) -> float:
         return float(self.trading.get_account().equity)
+
+    def buying_power(self) -> float:
+        account = self.trading.get_account()
+        value = getattr(account, "options_buying_power", None) or account.buying_power
+        return float(value)
+
+    def account_snapshot(self) -> AccountSnapshot:
+        account = self.trading.get_account()
+        status = account.status.value if hasattr(account.status, "value") else str(account.status)
+        crypto = getattr(account, "crypto_status", None)
+        return AccountSnapshot(
+            status=status,
+            equity=float(account.equity),
+            buying_power=float(getattr(account, "options_buying_power", None) or account.buying_power),
+            options_level=int(account.options_trading_level) if getattr(account, "options_trading_level", None) is not None else None,
+            multiplier=int(float(account.multiplier)) if getattr(account, "multiplier", None) is not None else None,
+            crypto_status=crypto.value if hasattr(crypto, "value") else (str(crypto) if crypto is not None else None),
+        )
 
     def is_market_open(self) -> bool:
         return bool(self.trading.get_clock().is_open)
@@ -205,6 +235,13 @@ class DryRunBroker:
 
     def account_equity(self) -> float:
         return self.equity
+
+    def buying_power(self) -> float:
+        return self.equity
+
+    def account_snapshot(self) -> AccountSnapshot:
+        real = self.quotes.account_snapshot()
+        return AccountSnapshot(real.status, self.equity, self.equity, real.options_level, real.multiplier, real.crypto_status)
 
     def is_market_open(self) -> bool:
         return self.quotes.is_market_open()

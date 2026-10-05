@@ -260,8 +260,11 @@ def _run_pull_history_command(
     assert isinstance(adapter, AlpacaAdapter)
 
     start = _parse_iso_date(start_text)
-    # Yesterday at the latest: the free plan withholds the newest 15 minutes of consolidated data.
-    latest_allowed = datetime.now(tz=ZoneInfo(config.app.market_timezone)).date() - timedelta(days=1)
+    # The free plan withholds the newest 15 minutes of consolidated data, so today only counts once the
+    # option session has closed (4:15 PM ET plus the delay); before that, yesterday is the latest.
+    local_now = datetime.now(tz=ZoneInfo(config.app.market_timezone))
+    session_over = local_now.time() >= datetime.strptime("16:31", "%H:%M").time()
+    latest_allowed = local_now.date() if session_over else local_now.date() - timedelta(days=1)
     end = min(_parse_iso_date(end_text), latest_allowed) if end_text else latest_allowed
     if end < start:
         raise SystemExit(f"End date {end} is before start date {start}.")
@@ -419,9 +422,7 @@ def _run_live_mode(
         all_evaluations: list[SetupEvaluation] = []
         all_alerts: list[AlertRecord] = []
         for symbol in config.app.symbols:
-            end = cycle_now
-            start = end - timedelta(minutes=config.live.lookback_minutes)
-            candles = adapter.get_historical_candles(symbol, timeframe=Timeframe.ONE_MINUTE, start=start, end=end)
+            candles = _fetch_session_candles(adapter, config, symbol, cycle_now)
             evaluations, _, _ = evaluate_symbol(candles, config)
             if not evaluations:
                 continue
@@ -476,6 +477,7 @@ def _run_trade_mode(*, config: AppConfig, poll_seconds: int, dry_run: bool, live
         mode = "paper"
 
     alpaca_broker = AlpacaBroker(config)
+    _preflight_account(config, alpaca_broker, real_money=real_money)
     broker = DryRunBroker(alpaca_broker, equity=config.trading.risk_capital_usd) if dry_run else alpaca_broker
     journal = TradeJournal(config.trading.journal_sqlite_path, config.trading.journal_csv_path)
     engine = ExecutionEngine(config, broker, journal, mode=mode)
@@ -510,8 +512,7 @@ def _run_trade_mode(*, config: AppConfig, poll_seconds: int, dry_run: bool, live
 
         try:
             for symbol in config.app.symbols:
-                start = now - timedelta(minutes=config.live.lookback_minutes)
-                candles = adapter.get_historical_candles(symbol, timeframe=Timeframe.ONE_MINUTE, start=start, end=now)
+                candles = _fetch_session_candles(adapter, config, symbol, now)
                 evaluations, _, _ = evaluate_symbol(candles, config)
                 if not evaluations:
                     continue
@@ -532,6 +533,40 @@ def _run_trade_mode(*, config: AppConfig, poll_seconds: int, dry_run: bool, live
         except Exception as exc:  # noqa: BLE001 - keep managing open positions through transient errors
             print(f"[{now.astimezone(market_timezone):%H:%M:%S}] loop error: {type(exc).__name__}: {exc}")
         time.sleep(max(5, poll_seconds))
+
+
+def _preflight_account(config: AppConfig, broker: AlpacaBroker, *, real_money: bool) -> None:
+    """Refuse to trade when the keys, account state or options approval don't match the configured mode."""
+    key_prefix = config.alpaca.api_key_id[:2].upper()
+    if real_money and key_prefix == "PK":
+        raise SystemExit("Live mode requested but the API key is a paper key (PK...).")
+    if not real_money and key_prefix == "AK":
+        raise SystemExit("Paper mode configured but the API key is a live key (AK...). Use the paper account's keys.")
+    try:
+        snapshot = broker.account_snapshot()
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"Could not read the Alpaca account: {type(exc).__name__}: {exc}") from exc
+    print(
+        f"Account: status={snapshot.status} equity=${snapshot.equity:,.2f} buying_power=${snapshot.buying_power:,.2f} "
+        f"options_level={snapshot.options_level} multiplier={snapshot.multiplier} crypto={snapshot.crypto_status}"
+    )
+    if snapshot.status.upper() != "ACTIVE":
+        raise SystemExit(f"Account status is {snapshot.status}, not ACTIVE.")
+    if snapshot.options_level is None or snapshot.options_level < 2:
+        raise SystemExit(f"Options level {snapshot.options_level} does not allow buying calls and puts (level 2 needed).")
+    if real_money and snapshot.equity < config.trading.risk_capital_usd:
+        raise SystemExit(f"Account equity ${snapshot.equity:,.2f} is below risk_capital_usd ${config.trading.risk_capital_usd:,.2f}.")
+
+
+def _fetch_session_candles(adapter: MarketDataAdapter, config: AppConfig, symbol: str, now: datetime) -> list:
+    """Whole-session bars for Alpaca (crossovers and warm-up need the full day); sliding window otherwise."""
+    if isinstance(adapter, AlpacaAdapter):
+        market_timezone = ZoneInfo(config.app.market_timezone)
+        session_clock = parse_clock_time(config.live.session_start_time, field_name="live.session_start_time")
+        session_start = datetime.combine(now.astimezone(market_timezone).date(), session_clock, tzinfo=market_timezone)
+        return adapter.get_session_candles(symbol, session_start.astimezone(UTC), now)
+    start = now - timedelta(minutes=config.live.lookback_minutes)
+    return adapter.get_historical_candles(symbol, timeframe=Timeframe.ONE_MINUTE, start=start, end=now)
 
 
 def _read_evaluations_from_db(path: str) -> list[SetupEvaluation]:

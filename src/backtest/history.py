@@ -135,6 +135,8 @@ class HistoryPuller:
                 continue
             window_start = datetime.combine(chunk_start, dt_time.min, tzinfo=self.market_timezone)
             window_end = datetime.combine(chunk_end + timedelta(days=1), dt_time.min, tzinfo=self.market_timezone)
+            # Consolidated bars inside the last 15 minutes are refused on the free plan; clamp the request.
+            window_end = min(window_end, datetime.now(tz=UTC) - timedelta(minutes=16))
             candles = self.adapter.get_historical_candles(
                 symbol,
                 Timeframe.ONE_MINUTE,

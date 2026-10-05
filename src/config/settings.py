@@ -93,6 +93,8 @@ class AlpacaConfig:
     # Real-time on the free plan, so it serves the window the historical feed cannot.
     live_feed: str = "iex"
     adjustment: str = "split"
+    # Fallback SIP/IEX volume ratio when the seam has no overlap to measure it on.
+    iex_volume_scale: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -134,7 +136,9 @@ class TradingConfig:
 
 @dataclass(frozen=True)
 class LiveConfig:
+    # Legacy sliding window for the Polygon path; Alpaca live/trade modes evaluate from session_start_time.
     lookback_minutes: int = 180
+    session_start_time: str = "04:00"
     poll_seconds: int = 60
     market_open_time: str = "09:30"
     market_close_time: str = "15:45"

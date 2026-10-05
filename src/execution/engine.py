@@ -124,6 +124,15 @@ class ExecutionEngine:
             self._log(now, "info", f"skip {evaluation.symbol} {evaluation.direction.value} {evaluation.grade.value}: {decision.reason}")
             return
         limit = round(quote.ask + self.trading.entry_limit_buffer, 2)
+        required = limit * 100.0 * decision.contracts
+        try:
+            available = self.broker.buying_power()
+        except Exception as exc:  # noqa: BLE001
+            self._halt(now, f"broker error reading buying power: {type(exc).__name__}: {exc}")
+            return
+        if available < required:
+            self._log(now, "warn", f"skip {evaluation.symbol} {evaluation.direction.value}: buying power ${available:.0f} < ${required:.0f} needed")
+            return
         order = self.broker.submit_limit(contract.occ_symbol, decision.contracts, "buy", limit)
         trade = LiveTrade(
             trade_id=f"{self.mode}-{uuid.uuid4().hex[:8]}",

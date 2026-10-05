@@ -110,6 +110,54 @@ def test_explicit_feed_overrides_window_selection(alpaca_config):
     assert client.requests[0].feed == DataFeed.SIP
 
 
+def test_stitch_scales_recent_volume_by_the_seam_ratio():
+    from src.data.alpaca import stitch_session_candles
+    from src.models import Candle
+
+    cutoff = datetime(2026, 10, 5, 15, 40, tzinfo=UTC)
+    def bar(minutes_from_cutoff: int, volume: float) -> Candle:
+        return Candle("QQQ", Timeframe.ONE_MINUTE, cutoff + timedelta(minutes=minutes_from_cutoff), 1, 1, 1, 1, volume)
+
+    older = [bar(-3, 4000.0), bar(-2, 6000.0), bar(-1, 5000.0)]          # SIP, before the cutoff
+    recent = [bar(-2, 150.0), bar(-1, 125.0), bar(0, 100.0), bar(1, 80.0)]  # IEX, overlapping then beyond
+
+    stitched = stitch_session_candles(older, recent, cutoff, default_scale=40.0)
+
+    assert [candle.timestamp for candle in stitched] == [bar(-3, 0).timestamp, bar(-2, 0).timestamp, bar(-1, 0).timestamp, cutoff, bar(1, 0).timestamp]
+    # Overlap: SIP 11,000 vs IEX 275 → scale 40; SIP bars keep their own volume.
+    assert [candle.volume for candle in stitched] == [4000.0, 6000.0, 5000.0, 4000.0, 3200.0]
+
+
+def test_stitch_uses_default_scale_without_overlap():
+    from src.data.alpaca import stitch_session_candles
+    from src.models import Candle
+
+    cutoff = datetime(2026, 10, 5, 15, 40, tzinfo=UTC)
+    older = [Candle("QQQ", Timeframe.ONE_MINUTE, cutoff - timedelta(minutes=5), 1, 1, 1, 1, 9000.0)]
+    recent = [Candle("QQQ", Timeframe.ONE_MINUTE, cutoff, 1, 1, 1, 1, 100.0)]
+
+    stitched = stitch_session_candles(older, recent, cutoff, default_scale=25.0)
+
+    assert [candle.volume for candle in stitched] == [9000.0, 2500.0]
+
+
+def test_session_candles_split_feeds_at_the_recent_window(alpaca_config):
+    client = _RecordingClient({"QQQ": []})
+    adapter = AlpacaAdapter(alpaca_config, client=client)
+    now = datetime(2026, 10, 5, 16, 0, tzinfo=UTC)
+    session_start = datetime(2026, 10, 5, 8, 0, tzinfo=UTC)
+
+    adapter.get_session_candles("QQQ", session_start, now)
+
+    sip_request, iex_request = client.requests
+    assert sip_request.feed == DataFeed.SIP
+    assert _as_utc(sip_request.start) == session_start
+    assert _as_utc(sip_request.end) == now - timedelta(minutes=16)
+    assert iex_request.feed == DataFeed.IEX
+    assert _as_utc(iex_request.start) == now - timedelta(minutes=46)
+    assert _as_utc(iex_request.end) == now
+
+
 def test_single_day_aggregate_rows_cover_the_market_day(alpaca_config):
     bar_time = datetime(2026, 3, 24, 14, 30, tzinfo=UTC)
     client = _RecordingClient({"SPY": [_bar(bar_time, 586.24, volume=12500)]})
