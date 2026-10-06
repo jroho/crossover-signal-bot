@@ -300,6 +300,32 @@ def test_unfilled_entry_is_canceled_after_the_timeout(tmp_path: Path):
     assert trade.entry_order_id in broker.canceled
 
 
+def test_exit_price_waits_for_the_market_sell_to_fill(tmp_path: Path):
+    broker = FakeBroker()
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)
+    engine = _engine(tmp_path, broker)
+    engine.sleeper = lambda _seconds: None
+    engine.on_evaluations([_evaluation()], NOW)
+    trade = next(iter(engine.open_trades.values()))
+    broker.fill(trade.entry_order_id, 1.80)
+    engine.on_tick(NOW + timedelta(minutes=1))
+
+    # The stop trips at a 1.20 bid; the broker reports the market sell as pending first, then filled at 1.22.
+    broker.set_quote(PUT_585, bid=1.20, ask=1.24)
+    original_close = broker.close_position
+
+    def slow_close(occ_symbol):
+        order = original_close(occ_symbol)
+        broker.orders[order.order_id] = OrderInfo(order.order_id, occ_symbol, "sell", order.qty, "filled", None, order.qty, 1.22)
+        return OrderInfo(order.order_id, occ_symbol, "sell", order.qty, "accepted", None)
+
+    broker.close_position = slow_close
+    engine.on_tick(NOW + timedelta(minutes=2))
+
+    assert trade.status == "closed" and trade.exit_reason == "stop"
+    assert trade.exit_price == 1.22 and trade.pnl_usd == pytest.approx(-58.0)
+
+
 def test_flat_time_and_max_hold_close_open_positions(tmp_path: Path):
     broker = FakeBroker()
     broker.set_quote(PUT_585, bid=1.90, ask=1.92)

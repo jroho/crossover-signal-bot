@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, time as dt_time, timedelta
@@ -10,7 +11,7 @@ from src.backtest.strikes import select_strikes
 from src.config import AppConfig
 from src.models import GRADE_RANK, Direction, Grade, SetupEvaluation
 
-from .broker import Broker
+from .broker import Broker, OrderInfo
 from .journal import LiveTrade, TradeJournal
 from .policy import TradingPolicy
 
@@ -37,6 +38,7 @@ class ExecutionEngine:
         self.journal = journal
         self.mode = mode
         self.printer = printer
+        self.sleeper: Callable[[float], None] = time.sleep
         self.policy = TradingPolicy(config)
         self.market_timezone = ZoneInfo(config.app.market_timezone)
         self.context: dict[str, DayContext] = {}
@@ -319,10 +321,24 @@ class ExecutionEngine:
             target = self.broker.get_order(trade.target_order_id)
             if target.is_open:
                 self.broker.cancel_order(trade.target_order_id)
-        exit_order = self.broker.close_position(trade.occ_symbol)
+        exit_order = self._await_fill(self.broker.close_position(trade.occ_symbol))
         exit_price = (exit_order.filled_avg_price if exit_order and exit_order.filled_avg_price else mark) or (trade.entry_price or 0.0)
         trade.exit_order_id = exit_order.order_id if exit_order else None
         self._close_trade(trade, exit_price, reason, now)
+
+    def _await_fill(self, order: OrderInfo | None, attempts: int = 5, pause_seconds: float = 1.0) -> OrderInfo | None:
+        """A market exit fills within a second or two; wait briefly so the journal books the real fill, not the bid."""
+        if order is None or order.is_filled:
+            return order
+        for _ in range(attempts):
+            self.sleeper(pause_seconds)
+            try:
+                refreshed = self.broker.get_order(order.order_id)
+            except Exception:  # noqa: BLE001 - fall back to the mark rather than stall position management
+                break
+            if refreshed.is_filled:
+                return refreshed
+        return order
 
     def _close_trade(self, trade: LiveTrade, exit_price: float, reason: str, now: datetime) -> None:
         trade.status = "closed"
