@@ -56,6 +56,18 @@ class SimConfig:
     require_alignment: bool = False
     # Skip entries on days whose opening range reads "turbulent" (only known for fills after 9:45).
     skip_turbulent: bool = False
+    # Entry window: no fills before first_entry_time; bull fills stop at bull_last_entry_time when set.
+    first_entry_time: str | None = None
+    bull_last_entry_time: str | None = None
+    # An A+ setup passes the alignment filters when it is the symbol's first regular-hours cross of the day or
+    # another symbol crossed the same way within confirmation_window_min minutes before the fill.
+    a_plus_confirmation: bool = False
+    confirmation_window_min: float = 10.0
+    # Live-engine parity: decide the entry on the FIRST evaluation graded at least this (the engine's entry floor),
+    # and skip the episode when that evaluation is below min_grade instead of waiting for an upgrade. None keeps
+    # the older behaviour of waiting up to max_entry_delay_min for min_grade. Upgrades that arrive later lost badly
+    # in the backtest (A+ after a lower first grade: 38% win), so parity also happens to be the better rule.
+    entry_floor_grade: str | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +119,9 @@ class TradeResult:
     volume_grade: str | None = None
     one_min_agreement: str | None = None
     bar_minutes_elapsed: float | None = None
+    # What satisfied the alignment filter: aligned, first-cross, other-index or none.
+    confirmation: str = "none"
+    prior_crosses: int | None = None
 
     @property
     def traded(self) -> bool:
@@ -155,8 +170,13 @@ def simulate_episode(
     cfg: SimConfig,
     market_timezone: ZoneInfo,
     context: DayContext | None = None,
+    session_crosses: dict[str, list[tuple[str, datetime]]] | None = None,
 ) -> list[TradeResult]:
-    """Simulate one crossover episode for every strike label in the config."""
+    """Simulate one crossover episode for every strike label in the config.
+
+    `session_crosses` maps each symbol to its regular-hours crossovers that day as (direction, cross_time); it feeds
+    the first-cross and other-index confirmations and is optional.
+    """
     direction = Direction(str(episode["direction"]))
     day_context = context or DayContext()
     symbol = str(episode["symbol"])
@@ -204,11 +224,20 @@ def simulate_episode(
     entry_grade = str(entry_row["grade"])
     trade_alignment = alignment(direction, day_context.trend_bias) if day_context.trend_label != "unknown" else "unknown"
     turbulence = day_context.turbulence if fill_et.time() >= OPENING_RANGE_END else "pre_open_range"
-    blocked = _entry_filter_reason(cfg, entry_grade, lag_value, direction, trade_alignment, turbulence)
+    first_cross, other_confirmed, prior_crosses = _session_confirmation(session_crosses, symbol, direction, cross_time, fill_time, cfg)
+    confirmation = _confirmation(cfg, entry_grade, trade_alignment, first_cross, other_confirmed)
+    below_min_grade = GRADE_RANK[Grade(entry_grade)] < GRADE_RANK[Grade(cfg.min_grade)]
+    blocked = (
+        ("filtered_grade" if below_min_grade else None)
+        or _time_window_block(cfg, direction, fill_et)
+        or _entry_filter_reason(cfg, entry_grade, lag_value, direction, confirmation, turbulence)
+    )
 
     results: list[TradeResult] = []
     for label in cfg.labels:
         result = base(label, "after_cutoff" if after_cutoff else (blocked or "no_fill"))
+        result.confirmation = confirmation
+        result.prior_crosses = prior_crosses
         result.entry_grade = str(entry_row["grade"])
         result.entry_delay_min = round((fill_time - detection_time).total_seconds() / 60.0, 2)
         result.entry_hour_et = fill_et.hour
@@ -244,24 +273,67 @@ def simulate_episode(
     return results
 
 
+def _confirmation(cfg: SimConfig, entry_grade: str, trade_alignment: str, first_cross: bool, other_confirmed: bool) -> str:
+    """What satisfies the alignment filters: the day's bias, or for A+ an intraday confirmation; "none" otherwise."""
+    if trade_alignment == "aligned":
+        return "aligned"
+    if cfg.a_plus_confirmation and entry_grade == Grade.A_PLUS.value:
+        if first_cross:
+            return "first-cross"
+        if other_confirmed:
+            return "other-index"
+    return "none"
+
+
 def _entry_filter_reason(
     cfg: SimConfig,
     entry_grade: str,
     lag_min: float | None,
     direction: Direction,
-    trade_alignment: str,
+    confirmation: str,
     turbulence: str,
 ) -> str | None:
     """Why an otherwise-alertable entry is declined by the optional filters, or None to trade it."""
     if cfg.plain_a_max_lag_min is not None and entry_grade != Grade.A_PLUS.value:
         if lag_min is None or lag_min > cfg.plain_a_max_lag_min:
             return "filtered_lag"
-    if cfg.require_alignment and trade_alignment != "aligned":
+    if cfg.require_alignment and confirmation == "none":
         return "filtered_direction"
-    if cfg.bull_requires_alignment and direction == Direction.BULL and trade_alignment != "aligned":
+    if cfg.bull_requires_alignment and direction == Direction.BULL and confirmation == "none":
         return "filtered_direction"
     if cfg.skip_turbulent and turbulence == "turbulent":
         return "filtered_turbulence"
+    return None
+
+
+def _session_confirmation(
+    session_crosses: dict[str, list[tuple[str, datetime]]] | None,
+    symbol: str,
+    direction: Direction,
+    cross_time: datetime,
+    fill_time: datetime,
+    cfg: SimConfig,
+) -> tuple[bool, bool, int | None]:
+    """(first cross of the day for this symbol, other symbol crossed the same way before the fill, prior cross count)."""
+    if session_crosses is None:
+        return False, False, None
+    own = session_crosses.get(symbol.upper(), [])
+    prior = sum(1 for _, when in own if when < cross_time)
+    window = timedelta(minutes=cfg.confirmation_window_min)
+    other = any(
+        side == direction.value and fill_time - window <= when <= fill_time
+        for other_symbol, crosses in session_crosses.items()
+        if other_symbol != symbol.upper()
+        for side, when in crosses
+    )
+    return prior == 0, other, prior
+
+
+def _time_window_block(cfg: SimConfig, direction: Direction, fill_et: datetime) -> str | None:
+    if cfg.first_entry_time is not None and fill_et.time() < dt_time.fromisoformat(cfg.first_entry_time):
+        return "filtered_time"
+    if cfg.bull_last_entry_time is not None and direction == Direction.BULL and fill_et.time() > dt_time.fromisoformat(cfg.bull_last_entry_time):
+        return "filtered_time"
     return None
 
 
@@ -273,6 +345,7 @@ def _find_entry_row(
     cfg: SimConfig,
 ) -> pd.Series | None:
     min_rank = GRADE_RANK[Grade(cfg.min_grade)]
+    floor_rank = GRADE_RANK[Grade(cfg.entry_floor_grade)] if cfg.entry_floor_grade else None
     deadline = detection_time + timedelta(minutes=cfg.max_entry_delay_min)
     candidates = evaluations[
         (evaluations["direction"] == direction.value)
@@ -281,7 +354,10 @@ def _find_entry_row(
         & (evaluations["timestamp"] <= deadline)
     ].sort_values("timestamp")
     for _, row in candidates.iterrows():
-        if GRADE_RANK[Grade(str(row["grade"]))] >= min_rank:
+        rank = GRADE_RANK[Grade(str(row["grade"]))]
+        if floor_rank is not None and rank >= floor_rank:
+            return row  # the live engine decides here; simulate_episode declines it if the grade is below min_grade
+        if rank >= min_rank:
             return row
     return None
 
@@ -496,6 +572,26 @@ def load_episodes(path: Path) -> list[dict[str, object]]:
         return list(csv.DictReader(handle))
 
 
+def load_session_crosses(
+    data_path: Path,
+    symbols: list[str],
+    day: date,
+    market_timezone: ZoneInfo,
+    market_open: dt_time,
+) -> dict[str, list[tuple[str, datetime]]]:
+    """Regular-hours crossovers for every symbol on one day, as the live engine would have seen them."""
+    crosses: dict[str, list[tuple[str, datetime]]] = {}
+    for symbol in symbols:
+        rows = load_episodes(data_path / "episodes" / symbol.upper() / f"{symbol.upper()}_episodes_{day.isoformat()}.csv")
+        session = []
+        for row in rows:
+            when = _floor_seconds(_parse_ts(row["cross_time"]))
+            if when.astimezone(market_timezone).time() >= market_open:
+                session.append((str(row["direction"]), when))
+        crosses[symbol.upper()] = session
+    return crosses
+
+
 def run_simulation(
     config: AppConfig,
     data_dir: str | Path,
@@ -513,6 +609,8 @@ def run_simulation(
     if vix is None:
         printer("No VIX history at data/context/VIX_History.csv (run fetch-vix); VIX regime will be 'unknown'.")
     results: list[TradeResult] = []
+    market_open = dt_time.fromisoformat(config.live.market_open_time)
+    crosses_by_day: dict[date, dict[str, list[tuple[str, datetime]]]] = {}
     for symbol in symbols:
         daily = build_daily_summary(data_path, symbol, market_timezone) if not cache_only else None
         day = start
@@ -526,9 +624,13 @@ def run_simulation(
                         evaluations = load_evaluations(cache)
                         option_bars = load_option_bars(data_path / "options" / symbol.upper() / f"{symbol.upper()}_options_{day.isoformat()}.csv")
                         context = context_for_day(daily, vix, day) if daily is not None else None
+                        if day not in crosses_by_day:
+                            crosses_by_day[day] = load_session_crosses(data_path, symbols, day, market_timezone, market_open)
                         for cfg in grid:
                             for episode in episodes:
-                                results.extend(simulate_episode(episode, evaluations, option_bars, cfg, market_timezone, context))
+                                results.extend(
+                                    simulate_episode(episode, evaluations, option_bars, cfg, market_timezone, context, session_crosses=crosses_by_day[day])
+                                )
                 if cache is not None:
                     days_done += 1
                     if days_done % 20 == 0:
@@ -621,7 +723,10 @@ def write_outputs(trades: pd.DataFrame, out_dir: str | Path, printer: Callable[[
     reach = mfe_reach_table(trades, ["stop_pct", "trail_trigger_pct", "label", "entry_grade"])
     reach.to_csv(out_path / "summary_mfe_reach.csv", index=False)
     funnel = trades["exit_reason"].value_counts()
-    declined = {reason: int(funnel.get(reason, 0)) for reason in ("no_entry", "after_cutoff", "filtered_lag", "filtered_direction", "filtered_turbulence", "no_fill")}
+    declined = {
+        reason: int(funnel.get(reason, 0))
+        for reason in ("no_entry", "filtered_grade", "after_cutoff", "filtered_time", "filtered_lag", "filtered_direction", "filtered_turbulence", "no_fill")
+    }
     printer(f"Wrote {len(trades)} rows to {out_path / 'trades.csv'}; declined: {declined}")
     printer("== by policy ==")
     printer(summarize(trades, POLICY_KEYS).to_string(index=False))

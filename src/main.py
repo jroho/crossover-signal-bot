@@ -82,6 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
     simulate.add_argument("--bull-requires-alignment", action="store_true", help="Take bull trades only on days whose data trend bias is bullish")
     simulate.add_argument("--require-alignment", action="store_true", help="Take trades only when they agree with the day's data trend bias (both directions; no trades on neutral days)")
     simulate.add_argument("--skip-turbulent", action="store_true", help="Skip entries on days whose opening range reads turbulent")
+    simulate.add_argument("--first-entry", default="", help="No entries whose fill lands before this market time (HH:MM); empty = none")
+    simulate.add_argument("--bull-last-entry", default="", help="No bull entries after this market time (HH:MM); empty = same as --last-entry")
+    simulate.add_argument(
+        "--a-plus-confirmation",
+        action="store_true",
+        help="Let an A+ setup pass the alignment filter when it is the symbol's first regular-hours cross of the day or another symbol crossed the same way within --confirmation-window minutes",
+    )
+    simulate.add_argument("--confirmation-window", type=float, default=10.0, help="Minutes for the other-symbol confirmation")
+    simulate.add_argument(
+        "--entry-floor",
+        default="",
+        help="Live-engine parity: decide each episode on its first evaluation graded at least this (B matches [trading] entry_floor_grade) and skip it if that grade is below --min-grade; empty = wait up to --max-entry-delay for --min-grade",
+    )
     simulate.add_argument("--trail-triggers", default="", help="Comma-separated gains (percent) that arm a trailing stop; empty = no trailing")
     simulate.add_argument("--trail", type=float, default=15.0, help="Trailing stop distance below the high, percent of the high")
     simulate.add_argument("--cache-only", action="store_true", help="Only build the per-day evaluation cache")
@@ -326,6 +339,11 @@ def _run_simulate_command(*, config: AppConfig, args: argparse.Namespace) -> Non
             bull_requires_alignment=args.bull_requires_alignment,
             require_alignment=args.require_alignment,
             skip_turbulent=args.skip_turbulent,
+            first_entry_time=args.first_entry or None,
+            bull_last_entry_time=args.bull_last_entry or None,
+            a_plus_confirmation=args.a_plus_confirmation,
+            confirmation_window_min=args.confirmation_window,
+            entry_floor_grade=args.entry_floor or None,
         )
         for target in targets
         for stop in stops
@@ -516,6 +534,7 @@ def _run_trade_mode(*, config: AppConfig, poll_seconds: int, dry_run: bool, live
                 evaluations, _, _ = evaluate_symbol(candles, config)
                 if not evaluations:
                     continue
+                engine.record_crosses(evaluations)
                 latest_timestamp = max(item.timestamp for item in evaluations)
                 fresh = []
                 for evaluation in evaluations:

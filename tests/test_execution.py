@@ -186,6 +186,57 @@ def test_policy_declines_plain_a_with_long_lag_counter_trend_and_late_entries():
     assert not grade_b.allowed
 
 
+def test_a_plus_confirmation_replaces_alignment_only_for_a_plus():
+    policy = TradingPolicy(_config(a_plus_confirmation=True))
+    neutral = DayContext(trend_bias=0, trend_label="neutral")
+
+    unconfirmed = policy.evaluate_entry(_evaluation(), neutral, NOW, premium=1.80)
+    assert not unconfirmed.allowed and "not aligned" in unconfirmed.reason
+
+    first = policy.evaluate_entry(_evaluation(), neutral, NOW, premium=1.80, first_cross=True)
+    assert first.allowed and first.reason == "A+ bear first-cross"
+
+    other = policy.evaluate_entry(_evaluation(), BULL_DAY, NOW, premium=1.80, other_confirmed=True)
+    assert other.allowed and other.reason == "A+ bear other-index"
+
+    aligned = policy.evaluate_entry(_evaluation(), BEAR_DAY, NOW, premium=1.80, first_cross=True)
+    assert aligned.allowed and aligned.reason == "A+ bear aligned"
+
+    plain_a = policy.evaluate_entry(_evaluation(grade=Grade.A, lag=3.0), neutral, NOW, premium=1.80, first_cross=True, other_confirmed=True)
+    assert not plain_a.allowed and "not aligned" in plain_a.reason
+
+    switched_off = TradingPolicy(_config())
+    assert not switched_off.evaluate_entry(_evaluation(), neutral, NOW, premium=1.80, first_cross=True, other_confirmed=True).allowed
+
+
+def test_entry_window_filters_the_first_minutes_and_late_bulls():
+    policy = TradingPolicy(_config(first_entry_time="09:45", bull_last_entry_time="12:00"))
+
+    early = policy.evaluate_entry(_evaluation(), BEAR_DAY, datetime(2026, 3, 24, 13, 40, tzinfo=UTC), premium=1.80)  # 09:40 ET
+    assert not early.allowed and "before first entry time 09:45" in early.reason
+    assert policy.evaluate_entry(_evaluation(), BEAR_DAY, datetime(2026, 3, 24, 13, 46, tzinfo=UTC), premium=1.80).allowed
+
+    half_past_noon = datetime(2026, 3, 24, 16, 30, tzinfo=UTC)
+    late_bull = policy.evaluate_entry(_evaluation(direction=Direction.BULL), BULL_DAY, half_past_noon, premium=1.80)
+    assert not late_bull.allowed and "bull entry after 12:00" in late_bull.reason
+    assert policy.evaluate_entry(_evaluation(), BEAR_DAY, half_past_noon, premium=1.80).allowed
+
+    default_window = TradingPolicy(_config())
+    assert default_window.evaluate_entry(_evaluation(direction=Direction.BULL), BULL_DAY, half_past_noon, premium=1.80).allowed
+
+
+def test_press_min_grade_limits_the_bear_multiplier():
+    policy = TradingPolicy(_config(risk_capital_usd=2500.0, press_min_grade="A+", bear_multiplier=3))
+    assert policy.size(Direction.BEAR, "aligned", premium=1.80, grade=Grade.A_PLUS) == 3  # base 2 x 3, capped at max_contracts
+    assert policy.size(Direction.BEAR, "aligned", premium=1.80, grade=Grade.A) == 2
+    assert policy.size(Direction.BEAR, "counter", premium=1.80, grade=Grade.A_PLUS) == 2
+    assert policy.size(Direction.BULL, "aligned", premium=1.80, grade=Grade.A_PLUS) == 2
+    assert policy.size(Direction.BEAR, "aligned", premium=1.80) == 3  # grade unknown keeps the plain multiplier
+
+    every_bear = TradingPolicy(_config(risk_capital_usd=2500.0, bear_multiplier=3))
+    assert every_bear.size(Direction.BEAR, "aligned", premium=1.80, grade=Grade.A) == 3
+
+
 # ----------------------------------------------------------------------------- engine
 
 
@@ -333,6 +384,85 @@ def test_broker_error_during_entry_halts_instead_of_crashing(tmp_path: Path):
     engine.on_evaluations([_evaluation()], NOW)
 
     assert engine.open_trades == {} and engine.halt_reason and "broker error" in engine.halt_reason
+
+
+def test_each_episode_is_decided_on_its_first_evaluation_at_the_entry_floor(tmp_path: Path):
+    broker = FakeBroker()
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)
+    engine = _engine(tmp_path, broker)
+
+    engine.on_evaluations([_evaluation(grade=Grade.B)], NOW)  # first look at the episode: B, below min_grade
+    assert engine.open_trades == {}
+    engine.on_evaluations([_evaluation()], NOW + timedelta(minutes=2))  # same episode upgraded to A+: not re-decided
+    assert engine.open_trades == {}
+    engine.on_evaluations([_evaluation(grade=Grade.C)], NOW + timedelta(minutes=5))  # below the floor: ignored
+    engine.on_evaluations([_evaluation(cross_minute=20)], NOW + timedelta(minutes=20))  # a new episode, A+ at first sight
+    assert len(engine.open_trades) == 1
+
+    strict = _engine(tmp_path / "strict", broker, _config(entry_floor_grade="A"))
+    strict.on_evaluations([_evaluation(grade=Grade.B)], NOW)  # below the floor: the episode stays undecided
+    strict.on_evaluations([_evaluation()], NOW + timedelta(minutes=2))
+    assert len(strict.open_trades) == 1
+
+
+def test_engine_confirms_a_plus_entries_from_first_cross_or_the_other_symbol(tmp_path: Path):
+    broker = FakeBroker()
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)
+    config = replace(_config(a_plus_confirmation=True), app=AppSection(symbols=["QQQ", "SPY"], market_timezone="America/New_York"))
+    neutral = DayContext(trend_bias=0, trend_label="neutral", vix_regime="mid", vix_prev_close=18.0)
+
+    # First regular-hours cross of the day: a premarket cross does not count against it.
+    engine = _engine(tmp_path / "first", broker, config)
+    engine.set_context("QQQ", neutral, NOW)
+    premarket = _evaluation(grade=Grade.C)
+    premarket.sma_cross_time = datetime(2026, 3, 24, 12, 0, tzinfo=UTC)  # 08:00 ET
+    engine.on_evaluations([premarket], NOW - timedelta(hours=3))
+    engine.on_evaluations([_evaluation()], NOW)
+    [first] = engine.open_trades.values()
+    assert first.decision == "A+ bear first-cross"
+    engine.new_session(NOW + timedelta(days=1))
+    assert engine.session_crosses == {}
+
+    # Not the first cross and no other-symbol confirmation: declined on a neutral day.
+    engine = _engine(tmp_path / "other", broker, config)
+    engine.set_context("QQQ", neutral, NOW)
+    engine.set_context("SPY", neutral, NOW)
+    earlier_bull = _evaluation(direction=Direction.BULL, grade=Grade.C)
+    earlier_bull.sma_cross_time = NOW - timedelta(minutes=35)
+    engine.on_evaluations([earlier_bull], NOW - timedelta(minutes=34))
+    engine.on_evaluations([_evaluation()], NOW)
+    assert engine.open_trades == {}
+
+    # SPY crossed bearish 3 minutes ago (any grade): the next QQQ bear episode is confirmed by the other index.
+    spy = _evaluation(grade=Grade.C)
+    spy.symbol = "SPY"
+    spy.sma_cross_time = NOW - timedelta(minutes=3)
+    engine.on_evaluations([spy], NOW - timedelta(minutes=2))
+    later = _evaluation(cross_minute=6)
+    later.timestamp = NOW + timedelta(minutes=3)
+    engine.on_evaluations([later], NOW + timedelta(minutes=3))
+    [confirmed] = engine.open_trades.values()
+    assert confirmed.decision == "A+ bear other-index"
+
+    # After a restart the whole session's evaluations are replayed into the cross log, so an earlier cross still counts.
+    restarted = _engine(tmp_path / "restart", broker, config)
+    restarted.set_context("QQQ", neutral, NOW)
+    restarted.record_crosses([earlier_bull, premarket])
+    assert restarted.session_crosses == {"QQQ": {("bull", earlier_bull.sma_cross_time)}}
+    restarted.on_evaluations([_evaluation()], NOW)
+    assert restarted.open_trades == {}
+
+    # Outside the confirmation window the same SPY cross no longer counts.
+    stale = _engine(tmp_path / "stale", broker, config)
+    stale.set_context("QQQ", neutral, NOW)
+    stale.set_context("SPY", neutral, NOW)
+    stale.on_evaluations([earlier_bull], NOW - timedelta(minutes=34))
+    old_spy = _evaluation(grade=Grade.C)
+    old_spy.symbol = "SPY"
+    old_spy.sma_cross_time = NOW - timedelta(minutes=11)
+    stale.on_evaluations([old_spy], NOW - timedelta(minutes=10))
+    stale.on_evaluations([_evaluation()], NOW)
+    assert stale.open_trades == {}
 
 
 def test_counter_trend_and_bull_on_bear_day_are_skipped_but_journaled_as_events(tmp_path: Path):

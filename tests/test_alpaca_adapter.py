@@ -158,6 +158,15 @@ def test_session_candles_split_feeds_at_the_recent_window(alpaca_config):
     assert _as_utc(iex_request.end) == now
 
 
+def test_session_candles_before_the_session_start_make_no_request(alpaca_config):
+    client = _RecordingClient({"QQQ": []})
+    adapter = AlpacaAdapter(alpaca_config, client=client)
+    session_start = datetime(2026, 10, 6, 8, 0, tzinfo=UTC)  # 04:00 ET
+
+    assert adapter.get_session_candles("QQQ", session_start, session_start - timedelta(hours=2)) == []
+    assert client.requests == []
+
+
 def test_single_day_aggregate_rows_cover_the_market_day(alpaca_config):
     bar_time = datetime(2026, 3, 24, 14, 30, tzinfo=UTC)
     client = _RecordingClient({"SPY": [_bar(bar_time, 586.24, volume=12500)]})

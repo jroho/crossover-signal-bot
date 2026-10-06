@@ -279,6 +279,89 @@ def test_entry_filters_for_direction_and_turbulence_use_day_context():
     assert no_bias.exit_reason == "filtered_direction" and no_bias.alignment == "neutral"
 
 
+def test_a_plus_confirmation_uses_first_cross_and_other_index_in_the_simulator():
+    from src.backtest.context import DayContext
+
+    evaluations = _evaluations({0: "A+"})
+    fill_time = DETECTION + timedelta(minutes=1)
+    bars = {OCC: _bars([(0, 2.00, 2.80, 1.95, 2.70)], fill_time)}
+    cfg = SimConfig(target_pct=30, require_alignment=True, a_plus_confirmation=True)
+    neutral_day = DayContext(trend_bias=0, trend_label="neutral", turbulence="normal")
+
+    first = {"QQQ": [("bear", CROSS)]}
+    [taken] = simulate_episode(_episode(), evaluations, bars, cfg, ET, neutral_day, session_crosses=first)
+    assert taken.exit_reason == "target" and taken.confirmation == "first-cross" and taken.prior_crosses == 0
+
+    later = {"QQQ": [("bull", CROSS - timedelta(minutes=40)), ("bear", CROSS)]}
+    [declined] = simulate_episode(_episode(), evaluations, bars, cfg, ET, neutral_day, session_crosses=later)
+    assert declined.exit_reason == "filtered_direction" and declined.prior_crosses == 1 and declined.confirmation == "none"
+
+    confirmed = {"QQQ": later["QQQ"], "SPY": [("bear", fill_time - timedelta(minutes=6))]}
+    [other] = simulate_episode(_episode(), evaluations, bars, cfg, ET, neutral_day, session_crosses=confirmed)
+    assert other.exit_reason == "target" and other.confirmation == "other-index"
+
+    stale = {"QQQ": later["QQQ"], "SPY": [("bear", fill_time - timedelta(minutes=11)), ("bull", fill_time - timedelta(minutes=2))]}
+    [unconfirmed] = simulate_episode(_episode(), evaluations, bars, cfg, ET, neutral_day, session_crosses=stale)
+    assert unconfirmed.exit_reason == "filtered_direction"
+
+    [plain_a] = simulate_episode(_episode(), _evaluations({0: "A"}), bars, cfg, ET, neutral_day, session_crosses=first)
+    assert plain_a.exit_reason == "filtered_direction"
+
+    bear_day = DayContext(trend_bias=-1, trend_label="bear", turbulence="normal")
+    [aligned] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=later)
+    assert aligned.exit_reason == "target" and aligned.confirmation == "aligned"
+
+    switched_off = SimConfig(target_pct=30, require_alignment=True)
+    [ignored] = simulate_episode(_episode(), evaluations, bars, switched_off, ET, neutral_day, session_crosses=first)
+    assert ignored.exit_reason == "filtered_direction"
+
+
+def test_entry_floor_decides_on_the_first_alertable_grade_like_the_live_engine():
+    evaluations = _evaluations({0: "B", 2: "A+"})
+    fill_after_upgrade = DETECTION + timedelta(minutes=3)
+    bars = {OCC: _bars([(0, 2.00, 2.80, 1.95, 2.70)], fill_after_upgrade)}
+
+    [waited] = simulate_episode(_episode(), evaluations, {OCC: bars[OCC]}, SimConfig(target_pct=30), ET)
+    assert waited.exit_reason == "target" and waited.entry_grade == "A+"
+
+    parity = SimConfig(target_pct=30, entry_floor_grade="B")
+    [decided_early] = simulate_episode(_episode(), evaluations, bars, parity, ET)
+    assert decided_early.exit_reason == "filtered_grade" and decided_early.entry_grade == "B" and decided_early.entry_price is None
+
+    immediate = _evaluations({0: "A+"})
+    [taken] = simulate_episode(_episode(), immediate, {OCC: _bars([(0, 2.00, 2.80, 1.95, 2.70)], DETECTION + timedelta(minutes=1))}, parity, ET)
+    assert taken.exit_reason == "target"
+
+
+def test_entry_window_filters_in_the_simulator():
+    from src.backtest.context import DayContext
+
+    evaluations = _evaluations({0: "A+"})
+    fill_time = DETECTION + timedelta(minutes=1)
+    fill_et = fill_time.astimezone(ET)
+    bars = {OCC: _bars([(0, 2.00, 2.80, 1.95, 2.70)], fill_time)}
+    bear_day = DayContext(trend_bias=-1, trend_label="bear", turbulence="normal")
+
+    not_yet_open = SimConfig(target_pct=30, first_entry_time=(fill_et + timedelta(minutes=5)).strftime("%H:%M"))
+    [early] = simulate_episode(_episode(), evaluations, bars, not_yet_open, ET, bear_day)
+    assert early.exit_reason == "filtered_time" and early.entry_price is None
+
+    open_window = SimConfig(target_pct=30, first_entry_time=(fill_et - timedelta(minutes=5)).strftime("%H:%M"))
+    [taken] = simulate_episode(_episode(), evaluations, bars, open_window, ET, bear_day)
+    assert taken.exit_reason == "target"
+
+    bull_episode = dict(_episode(), direction="bull", atm_symbol="QQQ260324C00585000")
+    bull_evaluations = _evaluations({0: "A+"})
+    bull_evaluations["direction"] = "bull"
+    bull_bars = {"QQQ260324C00585000": _bars([(0, 2.00, 2.80, 1.95, 2.70)], fill_time)}
+    bull_day = DayContext(trend_bias=1, trend_label="bull", turbulence="normal")
+    bulls_done = SimConfig(target_pct=30, bull_last_entry_time=(fill_et - timedelta(minutes=5)).strftime("%H:%M"))
+    [late_bull] = simulate_episode(bull_episode, bull_evaluations, bull_bars, bulls_done, ET, bull_day)
+    assert late_bull.exit_reason == "filtered_time"
+    [bear_still_fine] = simulate_episode(_episode(), evaluations, bars, bulls_done, ET, bear_day)
+    assert bear_still_fine.exit_reason == "target"
+
+
 def test_time_bucket_edges():
     from src.backtest.simulate import time_bucket
 

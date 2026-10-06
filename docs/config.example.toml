@@ -86,12 +86,26 @@ bear_multiplier = 2
 max_contracts = 3
 max_position_cost_pct = 50
 max_open_positions = 2
+# Each crossover episode is decided once, on its first evaluation graded at least this; below min_grade it is skipped
+# rather than re-checked for an upgrade (A+ that arrived after a lower first grade won 38% in the backtest).
+entry_floor_grade = "B"
 min_grade = "A"
 plain_a_max_lag_min = 5
 require_alignment = true
+# true: an A+ setup also passes the alignment filter when it is the symbol's first regular-hours cross of the day
+# or the other watched symbol crossed the same way within confirmation_window_min minutes (plain A still needs the
+# day's bias). Backtest: ~80 trades/yr at 69% instead of 55 at 67%.
+a_plus_confirmation = false
+confirmation_window_min = 10
+# The bear multiplier applies only to aligned bears at or above this grade; "A+" aligned bears won 88% in both
+# halves of the backtest year, plain-A bears did not.
+press_min_grade = "A"
 # bull / bear / neutral, set before the open from the headlines; empty uses the data bias.
 daily_bias_override = ""
+# Entry window. The first 15 minutes and noon-to-one bull entries lost in both backtests: "09:45" and "12:00".
+first_entry_time = ""
 last_entry_time = "13:00"
+bull_last_entry_time = ""
 flat_time = "15:35"
 max_hold_minutes = 45
 target_pct = 30

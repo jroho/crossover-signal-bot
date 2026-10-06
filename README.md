@@ -154,9 +154,10 @@ signal-bot --config config.toml trade --bias bear        # override today's data
 ```
 
 Trade mode runs the same signal loop as `live`, then hands each new alertable evaluation to the execution engine:
-- one trade per crossover episode and direction; ATM 0DTE contract for the signal's direction
+- one trade per crossover episode and direction; ATM 0DTE contract for the signal's direction. Each episode is decided once, on its first evaluation graded at least `entry_floor_grade` (default B); an episode whose first look is below `min_grade` is skipped rather than re-checked for an upgrade. The simulator mirrors this with `--entry-floor B`; without it the simulator waits up to `--max-entry-delay` minutes for `--min-grade`, which is a different (and worse) policy
 - entry policy = the backtest's surviving rules: A+ (or A with a 1m→5m lag ≤ `plain_a_max_lag_min`), aligned with the day's trend bias (data-derived, or `daily_bias_override` / `--bias`), no entries after `last_entry_time`
-- sizing against `risk_capital_usd`: one contract per `usd_per_contract`, doubled for aligned bears, capped by `max_contracts` and by `max_position_cost_pct` of capital
+- optional entry window and confirmations (all off by default): `first_entry_time` / `bull_last_entry_time` narrow the window; `a_plus_confirmation` lets an A+ setup trade without the day's bias when it is the symbol's first regular-hours cross of the day or the other symbol crossed the same way within `confirmation_window_min` minutes. The simulator has the same switches (`--first-entry`, `--bull-last-entry`, `--a-plus-confirmation`) so both paths can be backtested
+- sizing against `risk_capital_usd`: one contract per `usd_per_contract`, multiplied by `bear_multiplier` for aligned bears at or above `press_min_grade`, capped by `max_contracts` and by `max_position_cost_pct` of capital
 - entry as a limit at ask + `entry_limit_buffer`, canceled after `entry_timeout_minutes`; on fill a resting limit sell at `+target_pct`; the stop, `max_hold_minutes` and `flat_time` are enforced by closing the position
 - halts on the daily loss limit, `max_losses_per_day`, the drawdown kill switch or a broker error; open positions are still managed to exit
 - every decision and fill goes to `logs/live_trades.sqlite3` / `.csv` (`live_trades`, `live_events`); on restart the engine re-adopts journaled and broker-held positions
