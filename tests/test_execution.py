@@ -330,7 +330,7 @@ def test_daily_loss_limit_halts_new_entries_and_new_session_clears_it(tmp_path: 
     broker.set_quote(PUT_585, bid=1.78, ask=1.80)
     engine = _engine(tmp_path, broker, _config(daily_loss_limit_usd=100.0, max_losses_per_day=2))
 
-    for minute in (1, 6):
+    for minute in (1, 12):
         evaluation = _evaluation(cross_minute=minute)
         engine.on_evaluations([evaluation], NOW)
         trade = next(t for t in engine.open_trades.values() if t.status == "pending_entry")
@@ -341,7 +341,7 @@ def test_daily_loss_limit_halts_new_entries_and_new_session_clears_it(tmp_path: 
         broker.set_quote(PUT_585, bid=1.78, ask=1.80)
 
     assert engine.halt_reason and "daily loss" in engine.halt_reason
-    engine.on_evaluations([_evaluation(cross_minute=11)], NOW)
+    engine.on_evaluations([_evaluation(cross_minute=23)], NOW)
     assert len(engine.open_trades) == 2
 
     engine.new_session(NOW + timedelta(days=1))
@@ -352,7 +352,7 @@ def test_drawdown_kill_switch_survives_new_session(tmp_path: Path):
     broker = FakeBroker()
     broker.set_quote(PUT_585, bid=1.78, ask=1.80)
     engine = _engine(tmp_path, broker, _config(drawdown_kill_usd=100.0, daily_loss_limit_usd=10000.0, max_losses_per_day=99))
-    for minute in (1, 6):
+    for minute in (1, 12):
         engine.on_evaluations([_evaluation(cross_minute=minute)], NOW)
         trade = next(t for t in engine.open_trades.values() if t.status == "pending_entry")
         broker.fill(trade.entry_order_id, 1.80)
@@ -405,6 +405,44 @@ def test_each_episode_is_decided_on_its_first_evaluation_at_the_entry_floor(tmp_
     assert len(strict.open_trades) == 1
 
 
+def test_a_drifting_cross_time_is_still_the_same_episode(tmp_path: Path):
+    """Re-interpolation moves a cross's timestamp between polls; the engine must not re-decide the episode."""
+    broker = FakeBroker()
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)
+    engine = _engine(tmp_path, broker)
+
+    first_look = _evaluation(grade=Grade.A, lag=12.0)  # plain A with a long lag: declined
+    engine.on_evaluations([first_look], NOW)
+    assert engine.open_trades == {}
+
+    drifted = _evaluation()  # A+ now, same cross a third of a second later
+    drifted.sma_cross_time = first_look.sma_cross_time + timedelta(milliseconds=340)
+    engine.on_evaluations([drifted], NOW + timedelta(minutes=1))
+    drifted_more = _evaluation()
+    drifted_more.sma_cross_time = first_look.sma_cross_time + timedelta(minutes=3)
+    engine.on_evaluations([drifted_more], NOW + timedelta(minutes=4))
+    assert engine.open_trades == {}
+    assert engine.session_crosses["QQQ"] == {("bear", first_look.sma_cross_time)}
+
+    fresh = _evaluation(cross_minute=13)  # 12 minutes later: a genuinely new cross
+    engine.on_evaluations([fresh], NOW + timedelta(minutes=12))
+    assert len(engine.open_trades) == 1
+    assert len(engine.session_crosses["QQQ"]) == 2
+
+
+def test_cross_log_uses_the_cross_direction_not_the_setup_direction(tmp_path: Path):
+    engine = _engine(tmp_path, FakeBroker())
+    bull_setup_on_bear_cross = _evaluation(direction=Direction.BULL, grade=Grade.C)
+    bull_setup_on_bear_cross.sma_cross_signal = "bear"
+    no_cross = _evaluation(grade=Grade.C)
+    no_cross.sma_cross_signal = "none"
+    no_cross.sma_cross_time = None
+
+    engine.record_crosses([bull_setup_on_bear_cross, no_cross])
+
+    assert engine.session_crosses == {"QQQ": {("bear", bull_setup_on_bear_cross.sma_cross_time)}}
+
+
 def test_engine_confirms_a_plus_entries_from_first_cross_or_the_other_symbol(tmp_path: Path):
     broker = FakeBroker()
     broker.set_quote(PUT_585, bid=1.78, ask=1.80)
@@ -433,14 +471,14 @@ def test_engine_confirms_a_plus_entries_from_first_cross_or_the_other_symbol(tmp
     engine.on_evaluations([_evaluation()], NOW)
     assert engine.open_trades == {}
 
-    # SPY crossed bearish 3 minutes ago (any grade): the next QQQ bear episode is confirmed by the other index.
+    # SPY crosses bearish (any grade) 3 minutes before the next QQQ bear episode: confirmed by the other index.
     spy = _evaluation(grade=Grade.C)
     spy.symbol = "SPY"
-    spy.sma_cross_time = NOW - timedelta(minutes=3)
-    engine.on_evaluations([spy], NOW - timedelta(minutes=2))
-    later = _evaluation(cross_minute=6)
-    later.timestamp = NOW + timedelta(minutes=3)
-    engine.on_evaluations([later], NOW + timedelta(minutes=3))
+    spy.sma_cross_time = NOW + timedelta(minutes=5)
+    engine.on_evaluations([spy], NOW + timedelta(minutes=6))
+    later = _evaluation(cross_minute=12)  # a new QQQ cross, well past the episode merge window
+    later.timestamp = NOW + timedelta(minutes=8)
+    engine.on_evaluations([later], NOW + timedelta(minutes=8))
     [confirmed] = engine.open_trades.values()
     assert confirmed.decision == "A+ bear other-index"
 

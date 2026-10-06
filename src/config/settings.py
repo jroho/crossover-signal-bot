@@ -125,6 +125,9 @@ class TradingConfig:
     # Plain-A setups still need the day's trend bias. Backtest: ~80 trades/yr at 69% vs 55 at 67% aligned-only.
     a_plus_confirmation: bool = False
     confirmation_window_min: float = 10.0
+    # Crossovers in the same direction within this many minutes are one episode. The interpolated cross time of a
+    # cross on the still-printing 5m bar drifts between polls, and without merging the same cross is re-decided.
+    episode_merge_minutes: float = 5.0
     # The bear multiplier applies only to aligned bears at or above this grade ("A" keeps every aligned bear).
     # Backtest: A+ aligned bears won 88% in both halves of the year; plain-A bears did not hold up.
     press_min_grade: str = "A"

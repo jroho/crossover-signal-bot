@@ -97,6 +97,9 @@ require_alignment = true
 # day's bias). Backtest: ~80 trades/yr at 69% instead of 55 at 67%.
 a_plus_confirmation = false
 confirmation_window_min = 10
+# Crosses in the same direction within this many minutes are one episode (the interpolated cross time drifts
+# between polls while the 5m bar is still printing; without merging the same cross gets re-decided).
+episode_merge_minutes = 5
 # The bear multiplier applies only to aligned bears at or above this grade; "A+" aligned bears won 88% in both
 # halves of the backtest year, plain-A bears did not.
 press_min_grade = "A"

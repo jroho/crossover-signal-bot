@@ -42,9 +42,12 @@ class ExecutionEngine:
         self.context: dict[str, DayContext] = {}
         self.open_trades: dict[str, LiveTrade] = {}
         self.seen_episodes: set[tuple[str, str, str]] = set()
-        # Every regular-hours crossover seen this session per symbol, any grade: (direction, cross_time).
+        # Decided crosses per (symbol, trade direction); a cross within episode_merge_minutes of one is the same episode.
+        self.decided_crosses: dict[tuple[str, str], list[datetime]] = {}
+        # Every regular-hours crossover seen this session per symbol, any grade: (cross direction, cross_time).
         self.session_crosses: dict[str, set[tuple[str, datetime]]] = {}
         self.market_open = dt_time.fromisoformat(config.live.market_open_time)
+        self.episode_tolerance = timedelta(minutes=self.trading.episode_merge_minutes)
         self.entry_floor_rank = GRADE_RANK[Grade(self.trading.entry_floor_grade)]
         self.realized_today: float = 0.0
         self.equity_high: float = self.trading.risk_capital_usd
@@ -63,6 +66,10 @@ class ExecutionEngine:
         for trade in self.journal.load_open_trades():
             self.open_trades[trade.trade_id] = trade
             self.seen_episodes.add((trade.symbol, trade.direction, trade.cross_time))
+            try:
+                self.decided_crosses.setdefault((trade.symbol.upper(), trade.direction), []).append(datetime.fromisoformat(trade.cross_time))
+            except ValueError:
+                pass  # adopted positions carry no cross time
         journaled = {trade.occ_symbol for trade in self.open_trades.values()}
         for position in self.broker.list_positions():
             if position.occ_symbol in journaled:
@@ -103,17 +110,52 @@ class ExecutionEngine:
             self._record_cross(evaluation)
 
     def _record_cross(self, evaluation: SetupEvaluation) -> None:
+        """Log the crossover this evaluation refers to, keyed by the CROSS direction (not the setup direction).
+
+        Re-interpolation moves a cross's timestamp a little between polls; copies within episode_merge_minutes
+        are the same cross and the earliest estimate is kept.
+        """
         cross_time = evaluation.sma_cross_time
-        if cross_time is None or cross_time.astimezone(self.market_timezone).time() < self.market_open:
+        cross_direction = evaluation.sma_cross_signal
+        if cross_time is None or cross_direction not in {Direction.BULL.value, Direction.BEAR.value}:
             return
-        self.session_crosses.setdefault(evaluation.symbol.upper(), set()).add((evaluation.direction.value, cross_time))
+        if cross_time.astimezone(self.market_timezone).time() < self.market_open:
+            return
+        crosses = self.session_crosses.setdefault(evaluation.symbol.upper(), set())
+        for direction, seen in list(crosses):
+            if direction == cross_direction and abs(seen - cross_time) <= self.episode_tolerance:
+                if cross_time < seen:
+                    crosses.discard((direction, seen))
+                    crosses.add((direction, cross_time))
+                return
+        crosses.add((cross_direction, cross_time))
 
     def _is_first_cross(self, evaluation: SetupEvaluation) -> bool:
         """True when no earlier regular-hours crossover (either direction) has been seen for the symbol today."""
         if evaluation.sma_cross_time is None:
             return False
-        earlier = [t for _, t in self.session_crosses.get(evaluation.symbol.upper(), set()) if t < evaluation.sma_cross_time]
+        earlier = [
+            t
+            for _, t in self.session_crosses.get(evaluation.symbol.upper(), set())
+            if t < evaluation.sma_cross_time - self.episode_tolerance
+        ]
         return not earlier
+
+    def _episode_seen(self, evaluation: SetupEvaluation) -> bool:
+        """Already decided: the exact key, or a cross in the same direction within episode_merge_minutes."""
+        key = (evaluation.symbol, evaluation.direction.value, evaluation.sma_cross_time.isoformat() if evaluation.sma_cross_time else "none")
+        if key in self.seen_episodes:
+            return True
+        if evaluation.sma_cross_time is None:
+            return False
+        decided = self.decided_crosses.get((evaluation.symbol.upper(), evaluation.direction.value), [])
+        return any(abs(when - evaluation.sma_cross_time) <= self.episode_tolerance for when in decided)
+
+    def _mark_decided(self, evaluation: SetupEvaluation) -> None:
+        key = (evaluation.symbol, evaluation.direction.value, evaluation.sma_cross_time.isoformat() if evaluation.sma_cross_time else "none")
+        self.seen_episodes.add(key)
+        if evaluation.sma_cross_time is not None:
+            self.decided_crosses.setdefault((evaluation.symbol.upper(), evaluation.direction.value), []).append(evaluation.sma_cross_time)
 
     def _other_symbol_confirmed(self, evaluation: SetupEvaluation, now: datetime) -> bool:
         """True when another watched symbol crossed the same way within the confirmation window before now."""
@@ -130,10 +172,10 @@ class ExecutionEngine:
         if GRADE_RANK[evaluation.grade] < self.entry_floor_rank:
             return
         episode = (evaluation.symbol, evaluation.direction.value, evaluation.sma_cross_time.isoformat() if evaluation.sma_cross_time else "none")
-        if episode in self.seen_episodes:
+        if self._episode_seen(evaluation):
             return
         if self.halt_reason:
-            self.seen_episodes.add(episode)
+            self._mark_decided(evaluation)
             self._log(now, "info", f"skip {evaluation.symbol} {evaluation.direction.value}: halted ({self.halt_reason})")
             return
         if len([t for t in self.open_trades.values() if t.is_open]) >= self.trading.max_open_positions:
@@ -149,7 +191,7 @@ class ExecutionEngine:
             self._halt(now, f"broker error during entry: {type(exc).__name__}: {exc}")
             return
         if contract is None or quote is None or quote.ask <= 0:
-            self.seen_episodes.add(episode)
+            self._mark_decided(evaluation)
             self._log(now, "warn", f"skip {evaluation.symbol} {evaluation.direction.value}: no contract/quote for {choice.occ_symbol}")
             return
         decision = self.policy.evaluate_entry(
@@ -160,7 +202,7 @@ class ExecutionEngine:
             first_cross=self._is_first_cross(evaluation),
             other_confirmed=self._other_symbol_confirmed(evaluation, now),
         )
-        self.seen_episodes.add(episode)
+        self._mark_decided(evaluation)
         if not decision.allowed:
             self._log(now, "info", f"skip {evaluation.symbol} {evaluation.direction.value} {evaluation.grade.value}: {decision.reason}")
             return
@@ -298,6 +340,7 @@ class ExecutionEngine:
         self.realized_today = 0.0
         self.losses_today = 0
         self.seen_episodes.clear()
+        self.decided_crosses.clear()
         self.session_crosses.clear()
         if self.halt_reason and not self.halt_reason.startswith("drawdown"):
             self.halt_reason = None
