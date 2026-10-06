@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 
-from src.backtest.context import DayContext, alignment
+from src.backtest.context import DayContext, alignment, is_late_follower
 from src.config import AppConfig
 from src.models import GRADE_RANK, Direction, Grade, SetupEvaluation
 
@@ -39,8 +39,10 @@ class TradingPolicy:
         *,
         first_cross: bool = False,
         other_confirmed: bool = False,
+        other_lead_min: float | None = None,
     ) -> Decision:
-        """Decide one entry. `first_cross` and `other_confirmed` describe the session so far (see ExecutionEngine)."""
+        """Decide one entry. `first_cross`, `other_confirmed` and `other_lead_min` (minutes since the other symbol's
+        most recent earlier same-direction cross) describe the session so far (see ExecutionEngine)."""
         grade = evaluation.grade
         if GRADE_RANK[grade] < GRADE_RANK[Grade(self.trading.min_grade)]:
             return Decision(False, f"grade {grade.value} below {self.trading.min_grade}")
@@ -61,6 +63,8 @@ class TradingPolicy:
             return Decision(False, f"bull entry after {self.trading.bull_last_entry_time}")
         if evaluation.sma_cross_age_bars is not None and evaluation.sma_cross_age_bars > self.config.grading.fresh_cross_max_bars:
             return Decision(False, "crossover is stale")
+        if is_late_follower(other_lead_min, self.trading.late_follower_min_minutes, self.trading.late_follower_max_minutes):
+            return Decision(False, f"late follower: other index crossed {other_lead_min:.1f} min earlier")
         contracts = self.size(evaluation.direction, trade_alignment, premium, grade=grade)
         if contracts == 0:
             return Decision(False, f"premium {premium} too large for risk capital")

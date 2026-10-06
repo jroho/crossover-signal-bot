@@ -558,3 +558,60 @@ def test_journal_round_trips_open_trades(tmp_path: Path):
     [loaded] = journal.load_open_trades()
     assert loaded == trade
     assert (tmp_path / "j.csv").read_text(encoding="utf-8").count("\n") == 2
+
+
+def test_policy_declines_late_followers_of_the_other_index_only_inside_the_window():
+    policy = TradingPolicy(_config(late_follower_min_minutes=5, late_follower_max_minutes=20))
+
+    late = policy.evaluate_entry(_evaluation(), BEAR_DAY, NOW, premium=1.80, other_lead_min=12.0)
+    assert not late.allowed and late.reason == "late follower: other index crossed 12.0 min earlier"
+
+    for lead in (None, 3.0, 5.0, 25.0):
+        assert policy.evaluate_entry(_evaluation(), BEAR_DAY, NOW, premium=1.80, other_lead_min=lead).allowed, lead
+    assert not policy.evaluate_entry(_evaluation(), BEAR_DAY, NOW, premium=1.80, other_lead_min=20.0).allowed
+
+    # Default config leaves the rule off.
+    assert TradingPolicy(_config()).evaluate_entry(_evaluation(), BEAR_DAY, NOW, premium=1.80, other_lead_min=12.0).allowed
+
+
+def test_engine_measures_the_other_symbol_lead_from_its_cross_log(tmp_path: Path):
+    broker = FakeBroker()
+    broker.set_quote(PUT_585, bid=1.78, ask=1.80)
+    config = replace(
+        _config(late_follower_min_minutes=5, late_follower_max_minutes=20),
+        app=AppSection(symbols=["QQQ", "SPY"], market_timezone="America/New_York"),
+    )
+    qqq = _evaluation()  # QQQ bear A+, cross at 15:01:30 UTC
+
+    def spy_cross(minutes_before: int, direction: Direction = Direction.BEAR) -> SetupEvaluation:
+        spy = _evaluation(direction=direction, grade=Grade.C)
+        spy.symbol = "SPY"
+        spy.sma_cross_time = qqq.sma_cross_time - timedelta(minutes=minutes_before)
+        return spy
+
+    # SPY crossed bearish 12 minutes earlier: QQQ is a late follower and is skipped even on an aligned day.
+    engine = _engine(tmp_path / "late", broker, config)
+    engine.set_context("QQQ", BEAR_DAY, NOW)
+    engine.set_context("SPY", BEAR_DAY, NOW)
+    engine.on_evaluations([spy_cross(12)], NOW - timedelta(minutes=11))
+    engine.on_evaluations([qqq], NOW)
+    assert engine.open_trades == {}
+    assert engine._other_symbol_lead_minutes(qqq) == 12.0
+
+    # Three minutes apart the indices are moving together: traded.
+    engine = _engine(tmp_path / "together", broker, config)
+    engine.set_context("QQQ", BEAR_DAY, NOW)
+    engine.set_context("SPY", BEAR_DAY, NOW)
+    engine.on_evaluations([spy_cross(3)], NOW - timedelta(minutes=2))
+    engine.on_evaluations([qqq], NOW)
+    [trade] = engine.open_trades.values()
+    assert trade.decision == "A+ bear aligned"
+
+    # An opposite-direction SPY cross does not count as a lead.
+    engine = _engine(tmp_path / "opposite", broker, config)
+    engine.set_context("QQQ", BEAR_DAY, NOW)
+    engine.set_context("SPY", BEAR_DAY, NOW)
+    engine.on_evaluations([spy_cross(12, Direction.BULL)], NOW - timedelta(minutes=11))
+    assert engine._other_symbol_lead_minutes(qqq) is None
+    engine.on_evaluations([qqq], NOW)
+    assert len(engine.open_trades) == 1

@@ -58,6 +58,18 @@ def alignment(direction: Direction, trend_bias: int) -> str:
     return "aligned" if (trend_bias > 0) == is_bull_trade else "counter"
 
 
+def is_late_follower(other_lead_min: float | None, min_minutes: float | None, max_minutes: float | None) -> bool:
+    """True when the other symbol's same-direction cross led this one by more than min_minutes and at most max_minutes.
+
+    Crosses within a few minutes of each other are the indices moving together; a cross 5-20 minutes behind the
+    other index chased a move the leader had already made (backtest: 1 win in 5 for 10-20 min, 4 of 9 for 5-20).
+    A max of 0 or None disables the rule.
+    """
+    if other_lead_min is None or min_minutes is None or not max_minutes:
+        return False
+    return min_minutes < other_lead_min <= max_minutes
+
+
 def fetch_vix_history(out_path: str | Path, session: Any | None = None) -> Path:
     """Download CBOE's daily VIX history (DATE,OPEN,HIGH,LOW,CLOSE) to a CSV."""
     http = session or requests.Session()

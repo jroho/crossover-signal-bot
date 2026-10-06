@@ -168,6 +168,21 @@ class ExecutionEngine:
                     return True
         return False
 
+    def _other_symbol_lead_minutes(self, evaluation: SetupEvaluation) -> float | None:
+        """Minutes since another watched symbol's most recent earlier same-direction regular-hours cross, or None."""
+        if evaluation.sma_cross_time is None:
+            return None
+        earlier = [
+            cross_time
+            for symbol, crosses in self.session_crosses.items()
+            if symbol != evaluation.symbol.upper()
+            for direction, cross_time in crosses
+            if direction == evaluation.direction.value and cross_time < evaluation.sma_cross_time
+        ]
+        if not earlier:
+            return None
+        return round((evaluation.sma_cross_time - max(earlier)).total_seconds() / 60.0, 2)
+
     def _consider(self, evaluation: SetupEvaluation, now: datetime) -> None:
         if GRADE_RANK[evaluation.grade] < self.entry_floor_rank:
             return
@@ -201,6 +216,7 @@ class ExecutionEngine:
             quote.ask,
             first_cross=self._is_first_cross(evaluation),
             other_confirmed=self._other_symbol_confirmed(evaluation, now),
+            other_lead_min=self._other_symbol_lead_minutes(evaluation),
         )
         self._mark_decided(evaluation)
         if not decision.allowed:

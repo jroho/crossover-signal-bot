@@ -398,3 +398,38 @@ def test_summarize_reports_hit_rates_and_expectancy():
     assert row["target_rate"] == pytest.approx(1 / 3, abs=0.001)
     assert row["expectancy_usd"] == pytest.approx(10.0 / 3, abs=0.01)
     assert row["profit_factor"] == pytest.approx(70 / 60, abs=0.01)
+
+
+def test_late_follower_window_declines_crosses_that_trail_the_other_symbol():
+    from src.backtest.context import DayContext
+
+    evaluations = _evaluations({0: "A+"})
+    fill_time = DETECTION + timedelta(minutes=1)
+    bars = {OCC: _bars([(0, 2.00, 2.80, 1.95, 2.70)], fill_time)}
+    cfg = SimConfig(target_pct=30, late_follower_min_minutes=5, late_follower_max_minutes=20)
+    bear_day = DayContext(trend_bias=-1, trend_label="bear", turbulence="normal")
+
+    def crosses(lead_minutes):
+        return {"QQQ": [("bear", CROSS)], "SPY": [("bear", CROSS - timedelta(minutes=lead_minutes))]}
+
+    [late] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=crosses(12))
+    assert late.exit_reason == "filtered_late_follower" and late.other_lead_min == 12.0
+
+    [together] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=crosses(3))
+    assert together.exit_reason == "target" and together.other_lead_min == 3.0
+
+    [fresh_leg] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=crosses(25))
+    assert fresh_leg.exit_reason == "target" and fresh_leg.other_lead_min == 25.0
+
+    # The window is (min, max]: a lead of exactly min minutes still trades, exactly max is skipped.
+    [edge_low] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=crosses(5))
+    [edge_high] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=crosses(20))
+    assert edge_low.exit_reason == "target" and edge_high.exit_reason == "filtered_late_follower"
+
+    # Only earlier same-direction crosses of the other symbol count: a later cross or an opposite one is ignored.
+    ignored = {"QQQ": [("bear", CROSS)], "SPY": [("bear", CROSS + timedelta(minutes=8)), ("bull", CROSS - timedelta(minutes=8))]}
+    [leader] = simulate_episode(_episode(), evaluations, bars, cfg, ET, bear_day, session_crosses=ignored)
+    assert leader.exit_reason == "target" and leader.other_lead_min is None
+
+    [off] = simulate_episode(_episode(), evaluations, bars, SimConfig(target_pct=30), ET, bear_day, session_crosses=crosses(12))
+    assert off.exit_reason == "target" and off.other_lead_min == 12.0

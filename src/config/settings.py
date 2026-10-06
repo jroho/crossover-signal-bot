@@ -125,6 +125,12 @@ class TradingConfig:
     # Plain-A setups still need the day's trend bias. Backtest: ~80 trades/yr at 69% vs 55 at 67% aligned-only.
     a_plus_confirmation: bool = False
     confirmation_window_min: float = 10.0
+    # Late-follower skip: no entry when the other watched symbol's most recent same-direction regular-hours cross came
+    # more than late_follower_min_minutes and at most late_follower_max_minutes before this cross. Backtest (P4+,
+    # Oct 2025-Oct 2026, window 5-20): removed 9 trades at 44% win, PF 2.27 -> 2.65, max drawdown -$316 -> -$230, both
+    # halves improved. A max of 0 disables the rule.
+    late_follower_min_minutes: float = 0.0
+    late_follower_max_minutes: float = 0.0
     # Crossovers in the same direction within this many minutes are one episode. The interpolated cross time of a
     # cross on the still-printing 5m bar drifts between polls, and without merging the same cross is re-decided.
     episode_merge_minutes: float = 5.0

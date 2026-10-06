@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate.add_argument("--confirmation-window", type=float, default=10.0, help="Minutes for the other-symbol confirmation")
     simulate.add_argument(
+        "--skip-late-follower",
+        default="",
+        help="Skip entries whose cross came MIN-MAX minutes (e.g. 5-20) after the other symbol's most recent same-direction cross; empty = off",
+    )
+    simulate.add_argument(
         "--entry-floor",
         default="",
         help="Live-engine parity: decide each episode on its first evaluation graded at least this (B matches [trading] entry_floor_grade) and skip it if that grade is below --min-grade; empty = wait up to --max-entry-delay for --min-grade",
@@ -319,6 +324,10 @@ def _run_simulate_command(*, config: AppConfig, args: argparse.Namespace) -> Non
         for item in args.trail_triggers.split(",")
         if item.strip()
     ] or [None]
+    late_follower: tuple[float | None, float | None] = (None, None)
+    if args.skip_late_follower:
+        low, high = args.skip_late_follower.split("-", 1)
+        late_follower = (float(low), float(high))
     grid = [
         SimConfig(
             target_pct=target,
@@ -344,6 +353,8 @@ def _run_simulate_command(*, config: AppConfig, args: argparse.Namespace) -> Non
             a_plus_confirmation=args.a_plus_confirmation,
             confirmation_window_min=args.confirmation_window,
             entry_floor_grade=args.entry_floor or None,
+            late_follower_min_minutes=late_follower[0],
+            late_follower_max_minutes=late_follower[1],
         )
         for target in targets
         for stop in stops

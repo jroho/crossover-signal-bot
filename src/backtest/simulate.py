@@ -14,7 +14,7 @@ from src.data import CsvReplayAdapter
 from src.models import GRADE_RANK, Direction, Grade
 from src.signals import evaluate_symbol
 
-from .context import OPENING_RANGE_END, DayContext, alignment, build_daily_summary, context_for_day, load_vix_history
+from .context import OPENING_RANGE_END, DayContext, alignment, build_daily_summary, context_for_day, is_late_follower, load_vix_history
 from .strikes import STRIKE_LABELS
 
 LAG_BUCKETS = ((5.0, "<=5"), (15.0, "6-15"), (30.0, "16-30"), (float("inf"), ">30"))
@@ -68,6 +68,11 @@ class SimConfig:
     # the older behaviour of waiting up to max_entry_delay_min for min_grade. Upgrades that arrive later lost badly
     # in the backtest (A+ after a lower first grade: 38% win), so parity also happens to be the better rule.
     entry_floor_grade: str | None = None
+    # Late-follower skip: decline the entry when the other symbol's most recent same-direction regular-hours cross came
+    # more than late_follower_min_minutes and at most late_follower_max_minutes before this cross. Inside a few minutes
+    # the indices are moving together; inside the window the laggard is chasing a move the leader already made.
+    late_follower_min_minutes: float | None = None
+    late_follower_max_minutes: float | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,8 @@ class TradeResult:
     # What satisfied the alignment filter: aligned, first-cross, other-index or none.
     confirmation: str = "none"
     prior_crosses: int | None = None
+    # Minutes since the other symbol's most recent same-direction regular-hours cross before this one, if any.
+    other_lead_min: float | None = None
 
     @property
     def traded(self) -> bool:
@@ -225,12 +232,13 @@ def simulate_episode(
     trade_alignment = alignment(direction, day_context.trend_bias) if day_context.trend_label != "unknown" else "unknown"
     turbulence = day_context.turbulence if fill_et.time() >= OPENING_RANGE_END else "pre_open_range"
     first_cross, other_confirmed, prior_crosses = _session_confirmation(session_crosses, symbol, direction, cross_time, fill_time, cfg)
+    other_lead = _other_lead_minutes(session_crosses, symbol, direction, cross_time)
     confirmation = _confirmation(cfg, entry_grade, trade_alignment, first_cross, other_confirmed)
     below_min_grade = GRADE_RANK[Grade(entry_grade)] < GRADE_RANK[Grade(cfg.min_grade)]
     blocked = (
         ("filtered_grade" if below_min_grade else None)
         or _time_window_block(cfg, direction, fill_et)
-        or _entry_filter_reason(cfg, entry_grade, lag_value, direction, confirmation, turbulence)
+        or _entry_filter_reason(cfg, entry_grade, lag_value, direction, confirmation, turbulence, other_lead)
     )
 
     results: list[TradeResult] = []
@@ -238,6 +246,7 @@ def simulate_episode(
         result = base(label, "after_cutoff" if after_cutoff else (blocked or "no_fill"))
         result.confirmation = confirmation
         result.prior_crosses = prior_crosses
+        result.other_lead_min = other_lead
         result.entry_grade = str(entry_row["grade"])
         result.entry_delay_min = round((fill_time - detection_time).total_seconds() / 60.0, 2)
         result.entry_hour_et = fill_et.hour
@@ -292,6 +301,7 @@ def _entry_filter_reason(
     direction: Direction,
     confirmation: str,
     turbulence: str,
+    other_lead_min: float | None = None,
 ) -> str | None:
     """Why an otherwise-alertable entry is declined by the optional filters, or None to trade it."""
     if cfg.plain_a_max_lag_min is not None and entry_grade != Grade.A_PLUS.value:
@@ -303,7 +313,30 @@ def _entry_filter_reason(
         return "filtered_direction"
     if cfg.skip_turbulent and turbulence == "turbulent":
         return "filtered_turbulence"
+    if is_late_follower(other_lead_min, cfg.late_follower_min_minutes, cfg.late_follower_max_minutes):
+        return "filtered_late_follower"
     return None
+
+
+def _other_lead_minutes(
+    session_crosses: dict[str, list[tuple[str, datetime]]] | None,
+    symbol: str,
+    direction: Direction,
+    cross_time: datetime,
+) -> float | None:
+    """Minutes between this cross and the other symbols' most recent earlier same-direction regular-hours cross."""
+    if session_crosses is None:
+        return None
+    earlier = [
+        when
+        for other_symbol, crosses in session_crosses.items()
+        if other_symbol != symbol.upper()
+        for side, when in crosses
+        if side == direction.value and when < cross_time
+    ]
+    if not earlier:
+        return None
+    return round((cross_time - max(earlier)).total_seconds() / 60.0, 2)
 
 
 def _session_confirmation(
@@ -725,7 +758,7 @@ def write_outputs(trades: pd.DataFrame, out_dir: str | Path, printer: Callable[[
     funnel = trades["exit_reason"].value_counts()
     declined = {
         reason: int(funnel.get(reason, 0))
-        for reason in ("no_entry", "filtered_grade", "after_cutoff", "filtered_time", "filtered_lag", "filtered_direction", "filtered_turbulence", "no_fill")
+        for reason in ("no_entry", "filtered_grade", "after_cutoff", "filtered_time", "filtered_lag", "filtered_direction", "filtered_turbulence", "filtered_late_follower", "no_fill")
     }
     printer(f"Wrote {len(trades)} rows to {out_path / 'trades.csv'}; declined: {declined}")
     printer("== by policy ==")
