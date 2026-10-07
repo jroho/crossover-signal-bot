@@ -103,3 +103,4 @@ logs/sim/
 logs/*.log
 logs/*.err
 logs/trade.pid
+logs/parity/

@@ -104,6 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
     simulate.add_argument("--trail", type=float, default=15.0, help="Trailing stop distance below the high, percent of the high")
     simulate.add_argument("--cache-only", action="store_true", help="Only build the per-day evaluation cache")
 
+    parity = subparsers.add_parser("parity-check", help="Re-evaluate a day on full SIP bars and compare grades and entry decisions with the live trade loop")
+    parity.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
+    parity.add_argument("--date", default="", help="Trading day, YYYY-MM-DD; defaults to today")
+    parity.add_argument("--out", default="logs/parity", help="Report directory")
+
     trade = subparsers.add_parser("trade", help="Run the live signal loop with option execution (paper by default)")
     trade.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
     trade.add_argument("--poll-seconds", type=int, default=20, help="Polling interval in seconds")
@@ -193,6 +198,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "trade":
         _run_trade_mode(config=config, poll_seconds=args.poll_seconds, dry_run=args.dry_run, live_flag=args.live, bias_override=args.bias)
+        return
+
+    if args.command == "parity-check":
+        _run_parity_check_command(config=config, day_text=args.date, out_dir=args.out)
         return
 
     if args.command == "export-csv":
@@ -563,6 +572,65 @@ def _run_trade_mode(*, config: AppConfig, poll_seconds: int, dry_run: bool, live
         except Exception as exc:  # noqa: BLE001 - keep managing open positions through transient errors
             print(f"[{now.astimezone(market_timezone):%H:%M:%S}] loop error: {type(exc).__name__}: {exc}")
         time.sleep(max(5, poll_seconds))
+
+
+def _run_parity_check_command(*, config: AppConfig, day_text: str, out_dir: str) -> None:
+    """Compare one day's live evaluations and entry decisions with a re-evaluation on full SIP bars.
+
+    The live loop grades the newest 15 minutes on IEX bars with scaled volume; this re-grades the whole session on
+    consolidated bars with the same evaluator, replays the engine's entry decisions on them, and writes
+    logs/parity/parity_<date>.md plus a row in parity_log.csv so the mismatch rate accumulates across paper trading.
+    """
+    from datetime import date as date_type
+    from pathlib import Path
+
+    from src.execution import parity
+    from src.execution.daily_context import build_live_context
+
+    market_timezone = ZoneInfo(config.app.market_timezone)
+    now = datetime.now(tz=UTC)
+    day = date_type.fromisoformat(day_text) if day_text else now.astimezone(market_timezone).date()
+    adapter = _build_market_data_adapter(config, _resolve_provider(config), command="parity-check")
+    if not isinstance(adapter, AlpacaAdapter):
+        raise SystemExit("parity-check needs the Alpaca provider.")
+
+    live_rows, modes = parity.load_live_rows(config.storage.sqlite_path, day, config)
+    if live_rows.empty:
+        raise SystemExit(f"No trade-loop evaluations logged for {day}; nothing to compare.")
+    events = parity.load_live_events(config.trading.journal_sqlite_path, day, config)
+    contexts = parity.parse_contexts(events)
+    for symbol in config.app.symbols:
+        if symbol.upper() not in contexts:
+            contexts[symbol.upper()] = build_live_context(config, adapter, symbol, day, refresh_vix=False, override=config.trading.daily_bias_override or None)
+
+    start, end = parity.day_bounds(day, config)
+    sip_end = min(end, now - timedelta(minutes=16))
+    evaluations = []
+    for symbol in config.app.symbols:
+        candles = adapter.get_historical_candles(symbol, Timeframe.ONE_MINUTE, start, sip_end, feed=config.alpaca.historical_feed)
+        symbol_evaluations, _, _ = evaluate_symbol(candles, config)
+        evaluations.extend(symbol_evaluations)
+    sip_rows = parity.rows_from_evaluations(evaluations)
+    mismatches, volume_only, relevant, live_only, sip_only = parity.compare_rows(live_rows, sip_rows)
+    out_path = Path(out_dir)
+    sip_lines = parity.replay_decisions(config, evaluations, contexts, day, out_path / "replay" / day.isoformat())
+    result = parity.ParityResult(
+        day=day,
+        minutes_compared=len(live_rows) - live_only,
+        live_only=live_only,
+        sip_only=sip_only,
+        grade_mismatches=mismatches,
+        volume_grade_mismatches=volume_only,
+        decision_relevant_mismatches=relevant,
+        live_decisions=parity.parse_decisions(events),
+        sip_decisions=parity.parse_decisions([line.split("] ", 1)[-1] for line in sip_lines]),
+        live_modes=modes,
+        sip_end=sip_end,
+    )
+    report = parity.write_report(result, out_path, market_timezone)
+    parity.append_log(result, out_path)
+    print(parity.summary_line(result))
+    print(f"Report: {report}")
 
 
 def _preflight_account(config: AppConfig, broker: AlpacaBroker, *, real_money: bool) -> None:
