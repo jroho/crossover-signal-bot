@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     simulate.add_argument("--trail-triggers", default="", help="Comma-separated gains (percent) that arm a trailing stop; empty = no trailing")
     simulate.add_argument("--trail", type=float, default=15.0, help="Trailing stop distance below the high, percent of the high")
     simulate.add_argument("--cache-only", action="store_true", help="Only build the per-day evaluation cache")
+    simulate.add_argument(
+        "--no-volume-grade",
+        action="store_true",
+        help="Grade as if trigger volume were always strong (tests whether the volume filter earns its place); uses a separate evaluation cache",
+    )
 
     parity = subparsers.add_parser("parity-check", help="Re-evaluate a day on full SIP bars and compare grades and entry decisions with the live trade loop")
     parity.add_argument("--config", default=argparse.SUPPRESS, help="Path to TOML config file")
@@ -369,6 +374,10 @@ def _run_simulate_command(*, config: AppConfig, args: argparse.Namespace) -> Non
         for stop in stops
         for trail_trigger in trail_triggers
     ]
+    if args.no_volume_grade:
+        from dataclasses import replace as _replace
+
+        config = _replace(config, grading=_replace(config.grading, volume_in_grade=False))
     trades = run_simulation(config, args.data, symbols, start, end, grid, cache_only=args.cache_only)
     if args.cache_only:
         print("Evaluation cache built.")

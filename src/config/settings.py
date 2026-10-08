@@ -43,6 +43,10 @@ class GradingConfig:
     fresh_cross_max_bars: int = 3
     # A+ additionally requires the crossover to be at most this many 5m bars old.
     a_plus_max_cross_bars: int = 1
+    # When false the grade is computed as if trigger volume were always strong; the volume grade is still measured
+    # and logged. Exists to test whether the volume filter earns its place, because on the free IEX feed the live
+    # volume grade agrees with consolidated SIP volume on only about half of all minutes.
+    volume_in_grade: bool = True
 
 
 @dataclass(frozen=True)

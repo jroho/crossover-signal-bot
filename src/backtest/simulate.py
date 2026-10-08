@@ -549,8 +549,13 @@ def _strike_from_occ(occ_symbol: str) -> float | None:
 # Day loading and caching
 
 
-def evaluations_path(data_dir: Path, symbol: str, day: date) -> Path:
-    return data_dir / "evaluations" / symbol.upper() / f"{symbol.upper()}_evaluations_{day.isoformat()}.csv"
+def cache_variant(config: AppConfig) -> str:
+    """Grading options that change the cached rows get their own cache files."""
+    return "" if config.grading.volume_in_grade else "novol_"
+
+
+def evaluations_path(data_dir: Path, symbol: str, day: date, variant: str = "") -> Path:
+    return data_dir / "evaluations" / symbol.upper() / f"{symbol.upper()}_evaluations_{variant}{day.isoformat()}.csv"
 
 
 def build_evaluations_cache(config: AppConfig, data_dir: Path, symbol: str, day: date) -> Path | None:
@@ -558,7 +563,7 @@ def build_evaluations_cache(config: AppConfig, data_dir: Path, symbol: str, day:
     underlying = data_dir / "underlying" / symbol.upper() / f"{symbol.upper()}_1minute_{day.isoformat()}.csv"
     if not underlying.exists():
         return None
-    path = evaluations_path(data_dir, symbol, day)
+    path = evaluations_path(data_dir, symbol, day, cache_variant(config))
     if path.exists():
         return path
     candles = CsvReplayAdapter().load_candles(underlying, [symbol])

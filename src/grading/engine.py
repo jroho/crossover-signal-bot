@@ -64,7 +64,10 @@ def grade_setup(
     slopes_constructive = _constructive_rvgi_slope(indicator_state, previous_indicator, is_bull)
     momentum_aligned = rvgi_zero_favorable and rvgi_signal_favorable and rvgi_cross_favorable
     constructive_but_incomplete = rvgi_zero_favorable and rvgi_signal_favorable and slopes_constructive
-    volume_supportive = indicator_state.volume_grade in {VolumeGrade.STRONG, VolumeGrade.ACCEPTABLE}
+    # The grade may ignore volume (config.grading.volume_in_grade = false); the condition lists and rationale
+    # still report the measured volume grade so the log shows what was actually seen.
+    graded_volume = indicator_state.volume_grade if config.grading.volume_in_grade else VolumeGrade.STRONG
+    volume_supportive = graded_volume in {VolumeGrade.STRONG, VolumeGrade.ACCEPTABLE}
 
     _fill_condition_lists(
         evaluation=evaluation,
@@ -92,7 +95,7 @@ def grade_setup(
             evaluation.grade = Grade.A
     elif structure_aligned and volume_supportive and (momentum_aligned or constructive_but_incomplete):
         evaluation.grade = Grade.B
-    elif structure_aligned and indicator_state.volume_grade == VolumeGrade.STRONG:
+    elif structure_aligned and graded_volume == VolumeGrade.STRONG:
         evaluation.grade = Grade.B
     else:
         evaluation.grade = Grade.C
@@ -107,13 +110,14 @@ def grade_setup(
 
     if evaluation.grade == Grade.A and _qualifies_for_a_plus(
         evaluation=evaluation,
-        volume_grade=indicator_state.volume_grade,
+        volume_grade=graded_volume,
         slopes_constructive=slopes_constructive,
         one_min_status=one_min_confirmation.status,
         config=config,
     ):
         evaluation.grade = Grade.A_PLUS
-        evaluation.passed_conditions.append("A+: fresh cross, strong volume, momentum expanding, 1m agrees")
+        volume_note = "strong volume" if config.grading.volume_in_grade else "volume not graded"
+        evaluation.passed_conditions.append(f"A+: fresh cross, {volume_note}, momentum expanding, 1m agrees")
 
     evaluation.strike_bias, evaluation.strike_bias_reason = recommend_strike_bias(
         evaluation.grade,

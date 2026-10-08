@@ -398,3 +398,49 @@ def test_grade_c_when_five_min_cross_regime_points_elsewhere():
     assert graded.grade == Grade.C
     assert graded.strike_bias == StrikeBias.SKIP
     assert "5m SMA 15/30 crossover regime points the opposite direction" in graded.failed_conditions
+
+
+def test_volume_can_be_left_out_of_the_grade_but_is_still_reported():
+    from dataclasses import replace
+
+    evaluation = _evaluation(Direction.BULL, sma_cross_status="fresh")
+    current = IndicatorState(
+        symbol="QQQ",
+        timeframe=Timeframe.FIVE_MINUTE,
+        timestamp=evaluation.timestamp,
+        vwap=500.0,
+        ema9=501.0,
+        sma15=504.0,
+        sma30=502.0,
+        rvgi=0.4,
+        rvgi_sma=0.2,
+        recent_volume_avg=1800,
+        rolling_volume_avg=1700,
+        volume_grade=VolumeGrade.WEAK,
+    )
+    previous = IndicatorState(
+        symbol="QQQ",
+        timeframe=Timeframe.FIVE_MINUTE,
+        timestamp=evaluation.timestamp,
+        vwap=499.0,
+        ema9=500.5,
+        sma15=503.0,
+        sma30=501.5,
+        rvgi=0.3,
+        rvgi_sma=0.1,
+        recent_volume_avg=1700,
+        rolling_volume_avg=1600,
+        volume_grade=VolumeGrade.WEAK,
+    )
+    config = _config()
+
+    # Default: weak trigger volume is a failed condition and the grade falls to C.
+    graded = grade_setup(_evaluation(Direction.BULL, sma_cross_status="fresh"), current, previous, OneMinuteConfirmation("yes", "supportive"), config)
+    assert graded.grade == Grade.C and "trigger volume is weak" in graded.failed_conditions
+
+    # Volume left out of the grade: the same setup is A+, and the weak volume is still reported.
+    ignoring = replace(config, grading=replace(config.grading, volume_in_grade=False))
+    graded = grade_setup(evaluation, current, previous, OneMinuteConfirmation("yes", "supportive"), ignoring)
+    assert graded.grade == Grade.A_PLUS
+    assert "trigger volume is weak" in graded.failed_conditions
+    assert any(item.startswith("A+: fresh cross, volume not graded") for item in graded.passed_conditions)
