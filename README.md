@@ -220,6 +220,31 @@ Default tables:
 
 Each 5m bar logs both bullish and bearish evaluations, even when no alert is emitted. Logged rows should explicitly capture the 5m SMA crossover state, such as `sma_cross_signal`.
 
+## Scheduled sessions (Windows)
+
+Two Task Scheduler tasks run the bot unattended on market days: `SignalBot Morning Start` (checks the Alpaca calendar, refreshes VIX history, starts the loop) and `SignalBot Evening Stop` (stops the loop, runs the data parity check). Their settings are the `[schedule]` section of `config.toml` at the project root:
+
+```toml
+[schedule]
+enabled = true
+mode = "paper"              # paper or dry-run
+bias = ""                   # testing override only; empty = data bias
+start_time = "09:20"        # ET
+stop_time = "15:40"         # ET
+days = "MON,TUE,WED,THU,FRI"
+```
+
+Edit the section, then apply it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/schedule_install.ps1          # install or refresh
+powershell -ExecutionPolicy Bypass -File scripts/schedule_install.ps1 -Remove  # delete the tasks
+```
+
+Each run appends to `logs/schedule_<date>.log`. The tasks run as the signed-in user with highest privileges, so install them from an administrator PowerShell; that lets the evening task stop a loop that was started from an admin window. The PC must be awake and logged in during market hours (a locked screen is fine); Claude Code does not need to be open. `/trade-status` and `/trade-stop` work on the scheduled loop as usual.
+
+The start, stop and status scripts find the loop by its command line as well as by `logs/trade.pid`, so a loop whose PID file went missing still shows as running, blocks a second start, and gets stopped. When a stop fails (for example `Access is denied`), `trade_stop.ps1` says so, keeps the PID file and exits 1, and the evening task logs `STOP FAILED`.
+
 ## Testing
 ```bash
 pytest

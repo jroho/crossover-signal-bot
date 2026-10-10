@@ -130,3 +130,13 @@ market_open_time = "09:30"
 market_close_time = "15:45"
 
 
+
+[schedule]
+# Windows scheduled tasks: edit here, then run scripts/schedule_install.ps1 to apply.
+# Times are Eastern (market time); the installer converts them to this machine's local time.
+enabled = true
+mode = "paper"              # paper or dry-run
+bias = ""                   # testing override only (bull/bear/neutral); empty = data bias
+start_time = "09:20"        # start the loop; it waits for the 09:45 entry window
+stop_time = "15:40"         # after the 15:35 flatten: stop the loop and run the parity check
+days = "MON,TUE,WED,THU,FRI"
