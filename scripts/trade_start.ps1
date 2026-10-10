@@ -21,6 +21,12 @@ if (Test-Path $pidFile) {
         exit 1
     }
 }
+. (Join-Path $PSScriptRoot "trade_procs.ps1")
+$running = @(Get-TradeLoopProcess -Root $root)
+if ($running.Count -gt 0) {
+    Write-Output "Trade loop already running without a PID file (PIDs $(($running | ForEach-Object { $_.ProcessId }) -join ', ')). Run scripts/trade_stop.ps1 first."
+    exit 1
+}
 
 New-Item -ItemType Directory -Force (Join-Path $root "logs") | Out-Null
 $stamp = Get-Date -Format "yyyy-MM-dd"

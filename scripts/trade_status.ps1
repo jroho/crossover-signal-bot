@@ -5,9 +5,15 @@ $pidFile = Join-Path $root "logs\trade.pid"
 $stamp = Get-Date -Format "yyyy-MM-dd"
 $log = Join-Path $root "logs\trade_$stamp.log"
 
+. (Join-Path $PSScriptRoot "trade_procs.ps1")
+$loopIds = (@(Get-TradeLoopProcess -Root $root) | ForEach-Object { $_.ProcessId }) -join ", "
 if (Test-Path $pidFile) {
     $processId = Get-Content $pidFile | Select-Object -First 1
-    if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { Write-Output "RUNNING (PID $processId)" } else { Write-Output "NOT RUNNING (stale PID $processId)" }
+    if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { Write-Output "RUNNING (PID $processId)" }
+    elseif ($loopIds) { Write-Output "RUNNING with a stale PID file (loop PIDs $loopIds); stop it with scripts/trade_stop.ps1" }
+    else { Write-Output "NOT RUNNING (stale PID $processId)" }
+} elseif ($loopIds) {
+    Write-Output "RUNNING without a PID file (loop PIDs $loopIds); stop it with scripts/trade_stop.ps1"
 } else {
     Write-Output "NOT RUNNING (no PID file)"
 }

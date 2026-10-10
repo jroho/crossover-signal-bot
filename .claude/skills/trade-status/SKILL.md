@@ -10,4 +10,4 @@ Run `powershell -ExecutionPolicy Bypass -File scripts/trade_status.ps1` from the
 - open positions with entry, target and stop
 - realized P&L for the day
 
-If the log shows `loop error` lines or a HALT, call them out first. Do not restart or stop the loop from this skill; point the user to `/dry-run` or `/trade-stop`.
+If the log shows `loop error` lines or a HALT, call them out first. If the first line says `RUNNING without a PID file` or `RUNNING with a stale PID file`, call that out too: the loop is orphaned, and it should be stopped with `/trade-stop` before the next scheduled start. Do not restart or stop the loop from this skill; point the user to `/dry-run` or `/trade-stop`.
