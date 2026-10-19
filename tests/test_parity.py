@@ -199,3 +199,16 @@ def test_report_and_log_accumulate_per_day(tmp_path: Path):
     append_log(result, tmp_path)
     with path.open(newline="", encoding="utf-8") as handle:
         assert [row["date"] for row in csv.DictReader(handle)] == ["2026-10-06", "2026-10-07"]
+
+
+def test_compare_rows_handles_a_day_with_no_grade_mismatches():
+    rows = [_row(0, "A+", "strong"), _row(1, "C", "weak")]
+    live = _frame(rows)
+    sip = _frame(rows)
+    for frame in (live, sip):  # the live sqlite rows load as pandas string columns
+        frame["grade"] = frame["grade"].astype("string")
+
+    mismatches, volume_only, relevant, live_only, sip_only = compare_rows(live, sip)
+
+    assert len(mismatches) == 0 and relevant == 0
+    assert volume_only == 0 and live_only == 0 and sip_only == 0

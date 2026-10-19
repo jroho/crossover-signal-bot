@@ -205,10 +205,9 @@ def compare_rows(live: pd.DataFrame, sip: pd.DataFrame) -> tuple[pd.DataFrame, i
     both = merged[merged["_merge"] == "both"].copy()
     grade_diff = both[both["grade_live"] != both["grade_sip"]]
     volume_only = both[(both["grade_live"] == both["grade_sip"]) & (both["volume_grade_live"] != both["volume_grade_sip"])]
-    floor = GRADE_RANK[Grade.B]
-    relevant = grade_diff[
-        grade_diff["grade_live"].map(lambda g: GRADE_RANK[Grade(g)] >= floor) | grade_diff["grade_sip"].map(lambda g: GRADE_RANK[Grade(g)] >= floor)
-    ]
+    # isin always yields a bool Series; .map on an empty string column stays string-typed and breaks the |.
+    alertable = [grade.value for grade, rank in GRADE_RANK.items() if rank >= GRADE_RANK[Grade.B]]
+    relevant = grade_diff[grade_diff["grade_live"].isin(alertable) | grade_diff["grade_sip"].isin(alertable)]
     columns = keys + ["grade_live", "grade_sip", "volume_grade_live", "volume_grade_sip", "volume_live", "volume_sip", "recent_volume_avg_live", "recent_volume_avg_sip", "sma_cross_status_live", "sma_cross_status_sip"]
     return grade_diff[columns].sort_values(keys).reset_index(drop=True), len(volume_only), len(relevant), live_only, sip_only
 
